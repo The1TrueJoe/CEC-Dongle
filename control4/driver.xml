@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<devicedata>
+    <copyright>Copyright 2024-2026. MIT License.</copyright>
+    <creator>CEC-Dongle</creator>
+    <manufacturer>CEC-Dongle</manufacturer>
+    <name>CEC-Dongle HDMI-CEC TV Proxy</name>
+    <model>CEC-TV-1</model>
+    <created>2026-03-07 00:00:00</created>
+    <modified>2026-03-07 00:00:00</modified>
+    <version>1</version>
+    <small>devices_sm/cec_dongle.gif</small>
+    <large>devices_lg/cec_dongle.gif</large>
+    <control>lua_gen</control>
+    <controlmethod>IP</controlmethod>
+    <driver>DriverWorks</driver>
+    <templatedescription>HDMI-CEC TV proxy via CEC-Dongle REST API. Presents as a standard TV to Control4 while routing all commands through HDMI-CEC.</templatedescription>
+    <combo>true</combo>
+    <OnlineChanged>OnlineChanged</OnlineChanged>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- PROPERTIES                                                         -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <properties>
+        <property>
+            <name>Dongle IP Address</name>
+            <type>STRING</type>
+            <default></default>
+            <readonly>false</readonly>
+        </property>
+        <property>
+            <name>Poll Interval (seconds)</name>
+            <type>RANGED_INTEGER</type>
+            <minimum>5</minimum>
+            <maximum>300</maximum>
+            <default>30</default>
+            <readonly>false</readonly>
+        </property>
+        <property>
+            <name>CEC TV Logical Address</name>
+            <type>RANGED_INTEGER</type>
+            <minimum>0</minimum>
+            <maximum>15</maximum>
+            <default>0</default>
+            <readonly>false</readonly>
+        </property>
+        <property>
+            <name>CEC Audio Logical Address</name>
+            <type>RANGED_INTEGER</type>
+            <minimum>0</minimum>
+            <maximum>15</maximum>
+            <default>5</default>
+            <readonly>false</readonly>
+        </property>
+        <property>
+            <name>HDMI Input Count</name>
+            <type>RANGED_INTEGER</type>
+            <minimum>1</minimum>
+            <maximum>8</maximum>
+            <default>4</default>
+            <readonly>false</readonly>
+        </property>
+        <property>
+            <name>Volume Control Target</name>
+            <type>LIST</type>
+            <items>
+                <item>TV (Address 0)</item>
+                <item>Audio System (Address 5)</item>
+                <item>Broadcast</item>
+            </items>
+            <default>Audio System (Address 5)</default>
+            <readonly>false</readonly>
+        </property>
+        <property>
+            <name>Power On Command</name>
+            <type>LIST</type>
+            <items>
+                <item>Image View On (0x04)</item>
+                <item>Text View On (0x0D)</item>
+                <item>User Control Power (0x44 0x6D)</item>
+            </items>
+            <default>Image View On (0x04)</default>
+            <readonly>false</readonly>
+        </property>
+        <property>
+            <name>Driver Status</name>
+            <type>STRING</type>
+            <default>Not Connected</default>
+            <readonly>true</readonly>
+        </property>
+        <property>
+            <name>Debug Mode</name>
+            <type>LIST</type>
+            <items>
+                <item>Off</item>
+                <item>On</item>
+            </items>
+            <default>Off</default>
+            <readonly>false</readonly>
+        </property>
+    </properties>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- CONNECTIONS — TV Proxy (video out) + network                       -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <connections>
+        <!-- TV proxy connection: Control4 sees this as a TV -->
+        <connection>
+            <id>1</id>
+            <facing>6</facing>
+            <connectionname>TV</connectionname>
+            <type>2</type>  <!-- Video -->
+            <consumer>false</consumer>
+            <audiosource>false</audiosource>
+            <videosource>false</videosource>
+            <linelevel>false</linelevel>
+            <classes>
+                <class>
+                    <classname>TV</classname>
+                </class>
+            </classes>
+        </connection>
+
+        <!-- HDMI inputs (virtual - mapped to CEC physical addresses) -->
+        <connection>
+            <id>2001</id>
+            <facing>5</facing>
+            <connectionname>HDMI 1</connectionname>
+            <type>5</type>
+            <consumer>true</consumer>
+            <audiosource>true</audiosource>
+            <videosource>true</videosource>
+            <linelevel>true</linelevel>
+            <classes>
+                <class><classname>HDMI</classname></class>
+            </classes>
+        </connection>
+        <connection>
+            <id>2002</id>
+            <facing>5</facing>
+            <connectionname>HDMI 2</connectionname>
+            <type>5</type>
+            <consumer>true</consumer>
+            <audiosource>true</audiosource>
+            <videosource>true</videosource>
+            <linelevel>true</linelevel>
+            <classes>
+                <class><classname>HDMI</classname></class>
+            </classes>
+        </connection>
+        <connection>
+            <id>2003</id>
+            <facing>5</facing>
+            <connectionname>HDMI 3</connectionname>
+            <type>5</type>
+            <consumer>true</consumer>
+            <audiosource>true</audiosource>
+            <videosource>true</videosource>
+            <linelevel>true</linelevel>
+            <classes>
+                <class><classname>HDMI</classname></class>
+            </classes>
+        </connection>
+        <connection>
+            <id>2004</id>
+            <facing>5</facing>
+            <connectionname>HDMI 4</connectionname>
+            <type>5</type>
+            <consumer>true</consumer>
+            <audiosource>true</audiosource>
+            <videosource>true</videosource>
+            <linelevel>true</linelevel>
+            <classes>
+                <class><classname>HDMI</classname></class>
+            </classes>
+        </connection>
+
+        <!-- Network connection -->
+        <connection>
+            <id>6001</id>
+            <facing>6</facing>
+            <connectionname>Network</connectionname>
+            <type>4</type>
+            <consumer>true</consumer>
+            <audiosource>false</audiosource>
+            <videosource>false</videosource>
+            <linelevel>false</linelevel>
+            <classes>
+                <class><classname>TCP</classname></class>
+            </classes>
+        </connection>
+    </connections>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- COMMANDS                                                           -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <commands>
+        <!-- Power -->
+        <command>
+            <name>Power On</name>
+            <description>Turn on the TV via CEC</description>
+        </command>
+        <command>
+            <name>Power Off</name>
+            <description>Send CEC Standby to TV</description>
+        </command>
+
+        <!-- Volume -->
+        <command>
+            <name>Volume Up</name>
+            <description>CEC Volume Up</description>
+        </command>
+        <command>
+            <name>Volume Down</name>
+            <description>CEC Volume Down</description>
+        </command>
+        <command>
+            <name>Mute Toggle</name>
+            <description>CEC Mute Toggle</description>
+        </command>
+
+        <!-- Input -->
+        <command>
+            <name>Input HDMI 1</name>
+            <description>Switch to HDMI 1 via CEC Set Stream Path</description>
+        </command>
+        <command>
+            <name>Input HDMI 2</name>
+            <description>Switch to HDMI 2 via CEC Set Stream Path</description>
+        </command>
+        <command>
+            <name>Input HDMI 3</name>
+            <description>Switch to HDMI 3 via CEC Set Stream Path</description>
+        </command>
+        <command>
+            <name>Input HDMI 4</name>
+            <description>Switch to HDMI 4 via CEC Set Stream Path</description>
+        </command>
+
+        <!-- Raw CEC -->
+        <command>
+            <name>Send Raw CEC</name>
+            <description>Send arbitrary CEC command</description>
+            <params>
+                <param>
+                    <name>Destination</name>
+                    <type>RANGED_INTEGER</type>
+                    <minimum>0</minimum>
+                    <maximum>15</maximum>
+                </param>
+                <param>
+                    <name>Data</name>
+                    <type>STRING</type>
+                </param>
+            </params>
+        </command>
+    </commands>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- ACTIONS (Composer Pro UI)                                          -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <actions>
+        <action>
+            <name>Poll Device Status</name>
+            <command>PollStatus</command>
+        </action>
+        <action>
+            <name>Refresh CEC Log</name>
+            <command>RefreshLog</command>
+        </action>
+    </actions>
+
+    <config>
+        <script file="driver.lua"/>
+        <documentation file="www/documentation.rtf"/>
+    </config>
+</devicedata>
