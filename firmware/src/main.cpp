@@ -11,6 +11,7 @@
 #include "config_manager.h"
 #include "wifi_manager.h"
 #include "cec_driver.h"
+#include "ota_manager.h"
 #include "web_server.h"
 
 // ── Global instances ────────────────────────────────────────────────────────
@@ -19,6 +20,7 @@ ConfigManager configMgr;
 WiFiManager   wifiMgr;
 CecDriver     cecDriver;
 CecEventLog   cecLog;
+OtaManager    otaMgr;
 WebServer    *webServer = nullptr;
 
 // ── Setup ───────────────────────────────────────────────────────────────────
@@ -38,6 +40,9 @@ void setup() {
 
     // 2. Start WiFi (AP if no credentials, STA otherwise)
     wifiMgr.begin(cfg.hostname, cfg.wifiSsid, cfg.wifiPassword);
+
+    // 2b. Enable standard ESP OTA
+    otaMgr.begin(cfg.hostname);
 
     // 3. Initialise CEC driver
     cecLog.setMaxSize(cfg.logBufferSize);
@@ -71,5 +76,6 @@ void setup() {
 
 void loop() {
     wifiMgr.loop();
+    otaMgr.handle();
     cecDriver.loop();
 }

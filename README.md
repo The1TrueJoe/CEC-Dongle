@@ -39,10 +39,11 @@ Custom firmware for the [SMLIGHT SLWF-08](https://github.com/smlight-tech/slwf-0
 ### Firmware (`firmware/`)
 - **CEC 1.3a bit-bang driver** — ported from [Palakis/esphome-native-hdmi-cec](https://github.com/Palakis/esphome-native-hdmi-cec), interrupt-driven, no polling
 - **REST API** — full CEC send/receive, convenience endpoints for power, volume, input, plus raw CEC
-- **Web UI** — single-page dark-themed dashboard with live CEC bus log, configuration, control buttons
+- **Web UI** — maintainable multi-file source in `firmware/ui/`, compiled into a single minified page, stored in LittleFS and served pre-gzipped
 - **WiFi provisioning** — boots into AP mode with captive portal when no WiFi is configured; scan and connect via the web UI
 - **Persistent config** — all settings stored in LittleFS (GPIO pin, CEC address, physical address, OSD name, promiscuous/monitor modes)
 - **CEC event log** — ring buffer of recent CEC messages (configurable size), accessible via REST
+- **Standard ESP OTA** — supports Arduino OTA updates over the network after the first wired flash
 
 ### Control4 Driver (`control4/`)
 - **TV proxy** — appears as a standard TV in Control4, with 4 HDMI inputs
@@ -113,6 +114,12 @@ All endpoints return JSON. CORS headers are enabled for browser access.
 
 Requires [PlatformIO](https://platformio.org/).
 
+For the UI build pipeline, install the Python minifier dependency once:
+
+```bash
+python3 -m pip install -r requirements-ui.txt
+```
+
 ```bash
 cd firmware
 
@@ -122,9 +129,23 @@ pio run
 # Upload via USB
 pio run --target upload
 
+# Build + upload LittleFS (required for the web UI)
+pio run -t buildfs
+pio run -t uploadfs
+
+# OTA upload after the first wired flash
+pio run -e slwf08-ota -t upload
+
+# OTA upload of the LittleFS image
+pio run -e slwf08-ota -t uploadfs
+
 # Monitor serial
 pio device monitor
 ```
+
+The OTA environment defaults to `cec-dongle.local`. If you changed the hostname in the web UI, update `upload_port` in [firmware/platformio.ini](firmware/platformio.ini) to match.
+
+The UI source lives in [firmware/ui/index.html](firmware/ui/index.html), [firmware/ui/styles.css](firmware/ui/styles.css), and [firmware/ui/app.js](firmware/ui/app.js). During `buildfs` / `uploadfs`, the build script in [firmware/scripts/build_web_ui.py](firmware/scripts/build_web_ui.py) inlines the assets, minifies them with `minify-html`, then writes `data/index.html` and `data/index.html.gz`.
 
 ### Control4 Driver
 
@@ -174,13 +195,21 @@ zip -j CEC-Dongle.c4z driver.xml driver.lua
 ```
 ├── firmware/
 │   ├── platformio.ini          # PlatformIO build config
+│   ├── data/
+│   │   └── index.html          # Generated UI bundle for LittleFS
+│   ├── scripts/
+│   │   └── build_web_ui.py     # Inlines, minifies, and gzips the UI
+│   ├── ui/
+│   │   ├── index.html          # UI markup source
+│   │   ├── styles.css          # UI styles source
+│   │   └── app.js              # UI behavior source
 │   └── src/
 │       ├── main.cpp            # Entry point
 │       ├── cec_driver.h/.cpp   # CEC 1.3a bit-bang driver
 │       ├── config_manager.h    # LittleFS persistent config
+│       ├── ota_manager.h       # Arduino OTA support
 │       ├── wifi_manager.h      # AP + STA WiFi management
-│       ├── web_server.h        # REST API + route handlers
-│       └── web_ui.h            # Embedded HTML/CSS/JS web UI
+│       └── web_server.h        # REST API + route handlers + UI file serving
 ├── control4/
 │   ├── driver.xml              # C4 driver manifest (TV proxy)
 │   └── driver.lua              # C4 driver logic

@@ -8,12 +8,12 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
+#include <LittleFS.h>
 #include <circular_queue/circular_queue.h>
 
 #include "cec_driver.h"
 #include "config_manager.h"
 #include "wifi_manager.h"
-#include "web_ui.h"
 
 // ── Simple ring buffer for CEC event log ────────────────────────────────────
 
@@ -67,8 +67,14 @@ public:
 
     void begin() {
         // ── Web UI ──────────────────────────────────────────────────────
-        server_.on("/", HTTP_GET, [](AsyncWebServerRequest *req) {
-            req->send(200, "text/html", WEB_UI_HTML);
+        server_.on("/", HTTP_GET, [this](AsyncWebServerRequest *req) {
+            sendUi(req);
+        });
+        server_.on("/index.html", HTTP_GET, [this](AsyncWebServerRequest *req) {
+            sendUi(req);
+        });
+        server_.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *req) {
+            req->send(204);
         });
 
         // ── Captive portal redirects ────────────────────────────────────
@@ -91,12 +97,15 @@ public:
             JsonDocument doc;
             doc["version"] = VERSION;
             doc["uptime_ms"] = millis();
+            doc["hostname"] = cfg_.config.hostname;
             doc["wifi_status"] = wifi_.statusString();
             doc["wifi_ip"] = wifi_.localIP();
             doc["heap_free"] = ESP.getFreeHeap();
             doc["cec_address"] = cec_.address();
             doc["cec_physical"] = cec_.physicalAddress();
             doc["cec_osd_name"] = cec_.osdName();
+            doc["ota_enabled"] = true;
+            doc["ui_storage"] = "littlefs-gzip";
 
             String out;
             serializeJson(doc, out);
@@ -332,6 +341,29 @@ public:
     }
 
 private:
+    void sendUi(AsyncWebServerRequest *req) {
+        if (LittleFS.exists("/index.html.gz")) {
+            AsyncWebServerResponse *response = req->beginResponse(LittleFS, "/index.html.gz", "text/html");
+            response->addHeader("Content-Encoding", "gzip");
+            response->addHeader("Cache-Control", "public, max-age=3600");
+            req->send(response);
+            return;
+        }
+
+        if (LittleFS.exists("/index.html")) {
+            AsyncWebServerResponse *response = req->beginResponse(LittleFS, "/index.html", "text/html");
+            response->addHeader("Cache-Control", "no-cache");
+            req->send(response);
+            return;
+        }
+
+        req->send(
+            503,
+            "text/html",
+            "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>CEC Dongle</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#111318;color:#e4e4e7;display:grid;place-items:center;min-height:100vh;margin:0;padding:24px}main{max-width:560px;background:#181b22;border:1px solid #272c38;border-radius:10px;padding:20px}code{background:#1e222b;padding:2px 6px;border-radius:4px}</style></head><body><main><h1>UI filesystem image not found</h1><p>Upload the LittleFS image after flashing firmware.</p><p>Run <code>pio run -t uploadfs</code> in the <code>firmware</code> folder, or use the OTA environment and upload the filesystem image over the network.</p></main></body></html>"
+        );
+    }
+
     AsyncWebServer server_;
     CecDriver &cec_;
     ConfigManager &cfg_;
