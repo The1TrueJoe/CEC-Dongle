@@ -252,7 +252,29 @@ public:
 
     void onMessage(CecMessageCallback cb) { callback_ = cb; }
 
+    // Detach the CEC GPIO ISR — call before flash write operations (OTA)
+    // to prevent the interrupt firing during timing-sensitive flash I/O.
+    void pause() {
+        detachInterrupt(digitalPinToInterrupt(pin_));
+    }
+
+    // Re-attach the CEC GPIO ISR after OTA or other flash operations.
+    void resume() {
+        framesQueue_.reset();
+        attachInterrupt(digitalPinToInterrupt(pin_), CecDriver::gpioISR, CHANGE);
+    }
+
     uint8_t pin() const { return pin_; }
+
+    // Auto-negotiate a logical address on the CEC bus at startup.
+    // Sends a ping (src==dst) to each candidate address for the given device
+    // type. Claims the first address that returns no ACK (bus is free).
+    // Returns true if an address was claimed; false if all taken (0xF assigned).
+    bool negotiate(const String &deviceType = "playback");
+
+    // Broadcast Report Physical Address (0x84) to all devices.
+    // Call after begin() / negotiate() to announce presence on the bus.
+    void broadcastPhysicalAddress();
 
 private:
     // Pin helpers

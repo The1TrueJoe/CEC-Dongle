@@ -9,6 +9,8 @@
 #include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
+#include <Ticker.h>
+#include <Update.h>
 #include <circular_queue/circular_queue.h>
 
 #include "cec_driver.h"
@@ -62,8 +64,15 @@ private:
 
 class WebServer {
 public:
+    using VoidCb = std::function<void()>;
+
     WebServer(CecDriver &cec, ConfigManager &cfg, WiFiManager &wifi, CecEventLog &log)
         : server_(80), cec_(cec), cfg_(cfg), wifi_(wifi), log_(log) {}
+
+    // Register a callback fired when an HTTP OTA upload starts.
+    // main.cpp uses this to pause the CEC ISR before flash writes begin.
+    void onOtaBegin(VoidCb cb) { otaBeginCb_ = cb; }
+    void onOtaEnd(VoidCb cb)   { otaEndCb_   = cb; }
 
     void begin() {
         // ── Web UI ──────────────────────────────────────────────────────
@@ -95,17 +104,23 @@ public:
 
         server_.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest *req) {
             JsonDocument doc;
-            doc["version"] = VERSION;
-            doc["uptime_ms"] = millis();
-            doc["hostname"] = cfg_.config.hostname;
-            doc["wifi_status"] = wifi_.statusString();
-            doc["wifi_ip"] = wifi_.localIP();
-            doc["heap_free"] = ESP.getFreeHeap();
-            doc["cec_address"] = cec_.address();
-            doc["cec_physical"] = cec_.physicalAddress();
-            doc["cec_osd_name"] = cec_.osdName();
-            doc["ota_enabled"] = true;
-            doc["ui_storage"] = "littlefs-gzip";
+            doc["version"]              = VERSION;
+            doc["uptime_ms"]            = millis();
+            doc["hostname"]             = cfg_.config.hostname;
+            doc["wifi_status"]          = wifi_.statusString();
+            doc["wifi_ip"]              = wifi_.localIP();
+            doc["heap_free"]            = ESP.getFreeHeap();
+            doc["cec_address"]          = cec_.address();
+            doc["cec_physical"]         = cec_.physicalAddress();
+            doc["cec_osd_name"]         = cec_.osdName();
+            doc["tv_logical_address"]   = cfg_.config.tvLogicalAddress;
+            doc["audio_logical_address"]= cfg_.config.audioLogicalAddress;
+            doc["volume_target"]        = cfg_.config.volumeTarget;
+            doc["power_on_command"]     = cfg_.config.powerOnCommand;
+            doc["device_type"]          = cfg_.config.deviceType;
+            doc["auto_negotiate"]       = cfg_.config.autoNegotiate;
+            doc["ota_enabled"]          = true;
+            doc["ui_storage"]           = "littlefs-gzip";
 
             String out;
             serializeJson(doc, out);
@@ -258,16 +273,22 @@ public:
             }
 
             auto &c = cfg_.config;
-            if (doc.containsKey("wifi_ssid"))        c.wifiSsid       = doc["wifi_ssid"].as<String>();
-            if (doc.containsKey("wifi_password"))     c.wifiPassword    = doc["wifi_password"].as<String>();
-            if (doc.containsKey("hostname"))          c.hostname        = doc["hostname"].as<String>();
-            if (doc.containsKey("cec_pin"))           c.cecPin          = doc["cec_pin"];
-            if (doc.containsKey("cec_address"))       c.cecAddress      = doc["cec_address"];
-            if (doc.containsKey("cec_physical"))      c.cecPhysical     = doc["cec_physical"];
-            if (doc.containsKey("cec_osd_name"))      c.cecOsdName      = doc["cec_osd_name"].as<String>();
-            if (doc.containsKey("cec_promiscuous"))   c.cecPromiscuous  = doc["cec_promiscuous"];
-            if (doc.containsKey("cec_monitor_mode"))  c.cecMonitorMode  = doc["cec_monitor_mode"];
-            if (doc.containsKey("log_buffer_size"))   c.logBufferSize   = doc["log_buffer_size"];
+            if (doc.containsKey("wifi_ssid"))           c.wifiSsid             = doc["wifi_ssid"].as<String>();
+            if (doc.containsKey("wifi_password"))        c.wifiPassword          = doc["wifi_password"].as<String>();
+            if (doc.containsKey("hostname"))             c.hostname              = doc["hostname"].as<String>();
+            if (doc.containsKey("cec_pin"))              c.cecPin                = doc["cec_pin"];
+            if (doc.containsKey("cec_address"))          c.cecAddress            = doc["cec_address"];
+            if (doc.containsKey("cec_physical"))         c.cecPhysical           = doc["cec_physical"];
+            if (doc.containsKey("cec_osd_name"))         c.cecOsdName            = doc["cec_osd_name"].as<String>();
+            if (doc.containsKey("cec_promiscuous"))      c.cecPromiscuous        = doc["cec_promiscuous"];
+            if (doc.containsKey("cec_monitor_mode"))     c.cecMonitorMode        = doc["cec_monitor_mode"];
+            if (doc.containsKey("log_buffer_size"))      c.logBufferSize         = doc["log_buffer_size"];
+            if (doc.containsKey("tv_logical_address"))   c.tvLogicalAddress      = doc["tv_logical_address"];
+            if (doc.containsKey("audio_logical_address"))c.audioLogicalAddress   = doc["audio_logical_address"];
+            if (doc.containsKey("volume_target"))        c.volumeTarget          = doc["volume_target"].as<String>();
+            if (doc.containsKey("power_on_command"))     c.powerOnCommand        = doc["power_on_command"].as<String>();
+            if (doc.containsKey("device_type"))          c.deviceType            = doc["device_type"].as<String>();
+            if (doc.containsKey("auto_negotiate"))       c.autoNegotiate         = doc["auto_negotiate"];
 
             cfg_.save();
             req->send(200, "application/json", "{\"success\":true,\"message\":\"Saved. Restart to apply CEC changes.\"}");
@@ -302,25 +323,88 @@ public:
 
             req->send(200, "application/json", "{\"success\":true,\"message\":\"Connecting...\"}");
 
-            // Deferred connect (after response is sent)
-            delay(500);
-            wifi_.connectSTA(ssid, pass);
+            // Defer the STA connect so the response is sent before WiFi mode changes.
+            connectTicker_.once_ms(600, [this, ssid, pass]() {
+                wifi_.connectSTA(ssid, pass);
+            });
         });
 
         // ── REST: System ────────────────────────────────────────────────
 
-        server_.on("/api/system/restart", HTTP_POST, [](AsyncWebServerRequest *req) {
+        server_.on("/api/system/restart", HTTP_POST, [this](AsyncWebServerRequest *req) {
             req->send(200, "application/json", "{\"success\":true,\"message\":\"Restarting...\"}");
-            delay(500);
-            ESP.restart();
+            // Defer restart so the TCP stack can actually send the response first.
+            // delay() inside an async handler blocks the stack and drops the response.
+            restartTicker_.once_ms(800, []() {
+                Serial.println("[Web] Restarting (scheduled)");
+                ESP.restart();
+            });
         });
 
         server_.on("/api/system/reset", HTTP_POST, [this](AsyncWebServerRequest *req) {
             cfg_.reset();
             req->send(200, "application/json", "{\"success\":true,\"message\":\"Config reset. Restarting...\"}");
-            delay(500);
-            ESP.restart();
+            restartTicker_.once_ms(800, []() {
+                Serial.println("[Web] Restarting after factory reset");
+                ESP.restart();
+            });
         });
+
+        // ── REST: OTA firmware upload (HTTP, browser-based) ─────────────
+        // More reliable than ArduinoOTA/UDP on congested networks.
+        // Upload a .bin produced by PlatformIO via a standard multipart POST.
+
+        server_.on("/api/ota/update", HTTP_POST,
+            // (1) Response handler — called after the upload body is fully received
+            [this](AsyncWebServerRequest *req) {
+                bool ok = !Update.hasError();
+                if (ok) {
+                    req->send(200, "application/json",
+                              "{\"success\":true,\"message\":\"Firmware written. Restarting...\"}");
+                    restartTicker_.once_ms(1200, []() {
+                        Serial.println("[OTA HTTP] Restarting after successful flash");
+                        ESP.restart();
+                    });
+                } else {
+                    String err = Update.errorString();
+                    String resp = "{\"success\":false,\"error\":\"" + err + "\"}";
+                    req->send(500, "application/json", resp);
+                    // Re-attach CEC ISR since OTA failed (onOtaEnd not called by Update)
+                    if (otaEndCb_) otaEndCb_();
+                    Serial.printf("[OTA HTTP] Failed: %s\n", err.c_str());
+                }
+            },
+            // (2) Upload handler — streams the binary into flash
+            [this](AsyncWebServerRequest *req, const String &filename,
+                   size_t index, uint8_t *data, size_t len, bool final) {
+                if (index == 0) {
+                    Serial.printf("[OTA HTTP] Upload begin: %s\n", filename.c_str());
+                    // Pause CEC ISR before any flash write to avoid bus glitches
+                    if (otaBeginCb_) otaBeginCb_();
+                    // UPDATE_SIZE_UNKNOWN lets the Update lib use available flash space
+                    if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+                        Serial.printf("[OTA HTTP] begin() failed: %s\n", Update.errorString());
+                        return;
+                    }
+                }
+                if (Update.isRunning()) {
+                    size_t written = Update.write(data, len);
+                    if (written != len) {
+                        Serial.printf("[OTA HTTP] write() error: %s\n", Update.errorString());
+                    }
+                }
+                if (final) {
+                    if (Update.end(true)) {
+                        Serial.printf("[OTA HTTP] Success — %u bytes written\n",
+                                      static_cast<unsigned>(index + len));
+                        if (otaEndCb_) otaEndCb_();
+                    } else {
+                        Serial.printf("[OTA HTTP] end() failed: %s\n", Update.errorString());
+                        // otaEndCb_ called in response handler on error path above
+                    }
+                }
+            }
+        );
 
         // ── CORS preflight ──────────────────────────────────────────────
         DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
@@ -369,4 +453,8 @@ private:
     ConfigManager &cfg_;
     WiFiManager &wifi_;
     CecEventLog &log_;
+    VoidCb  otaBeginCb_;
+    VoidCb  otaEndCb_;
+    Ticker  restartTicker_;
+    Ticker  connectTicker_;
 };

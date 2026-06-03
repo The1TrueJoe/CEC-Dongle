@@ -53,10 +53,12 @@ INPUT_BINDING_BASE = 2001 -- HDMI 1 = 2001, HDMI 2 = 2002, etc.
 
 g_dongleIP      = ""
 g_pollInterval  = 30
+-- CEC routing config — populated from the dongle's /api/status on each poll.
+-- All CEC tuning is done on the dongle web UI, not in Control4 properties.
 g_tvAddress     = 0
 g_audioAddress  = 5
-g_volumeTarget  = "audio"
-g_powerOnCmd    = "image_view_on"
+g_volumeTarget  = "audio"   -- "audio" | "tv" | "broadcast"
+g_powerOnCmd    = "image_view_on" -- "image_view_on" | "text_view_on" | "user_control_power"
 g_debugMode     = false
 g_powerState    = "OFF"
 g_currentInput  = 1
@@ -106,32 +108,6 @@ function OnPropertyChanged(strProperty)
         g_pollInterval = tonumber(Properties["Poll Interval (seconds)"]) or 30
         SetupPollTimer()
 
-    elseif strProperty == "CEC TV Logical Address" then
-        g_tvAddress = tonumber(Properties["CEC TV Logical Address"]) or 0
-
-    elseif strProperty == "CEC Audio Logical Address" then
-        g_audioAddress = tonumber(Properties["CEC Audio Logical Address"]) or 5
-
-    elseif strProperty == "Volume Control Target" then
-        local val = Properties["Volume Control Target"] or ""
-        if val:find("TV") then
-            g_volumeTarget = "tv"
-        elseif val:find("Broadcast") then
-            g_volumeTarget = "broadcast"
-        else
-            g_volumeTarget = "audio"
-        end
-
-    elseif strProperty == "Power On Command" then
-        local val = Properties["Power On Command"] or ""
-        if val:find("Text View") then
-            g_powerOnCmd = "text_view_on"
-        elseif val:find("User Control") then
-            g_powerOnCmd = "user_control_power"
-        else
-            g_powerOnCmd = "image_view_on"
-        end
-
     elseif strProperty == "Debug Mode" then
         g_debugMode = (Properties["Debug Mode"] == "On")
     end
@@ -140,21 +116,10 @@ end
 function ReadProperties()
     g_dongleIP     = Properties["Dongle IP Address"] or ""
     g_pollInterval = tonumber(Properties["Poll Interval (seconds)"]) or 30
-    g_tvAddress    = tonumber(Properties["CEC TV Logical Address"]) or 0
-    g_audioAddress = tonumber(Properties["CEC Audio Logical Address"]) or 5
     g_debugMode    = (Properties["Debug Mode"] == "On")
-
-    local volProp = Properties["Volume Control Target"] or ""
-    if volProp:find("TV") then g_volumeTarget = "tv"
-    elseif volProp:find("Broadcast") then g_volumeTarget = "broadcast"
-    else g_volumeTarget = "audio"
-    end
-
-    local pwrProp = Properties["Power On Command"] or ""
-    if pwrProp:find("Text View") then g_powerOnCmd = "text_view_on"
-    elseif pwrProp:find("User Control") then g_powerOnCmd = "user_control_power"
-    else g_powerOnCmd = "image_view_on"
-    end
+    -- CEC routing settings (tvAddress, audioAddress, volumeTarget, powerOnCmd)
+    -- are NOT stored as Control4 properties. They are configured on the dongle
+    -- web UI and fetched from /api/status on each poll.
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -250,10 +215,27 @@ function PollStatus()
         local ok, result = pcall(C4.JsonDecode, C4, strData)
         if ok and result then
             SetOnline()
+
+            -- Sync CEC routing config from the dongle so Control4 always uses
+            -- whatever is configured on the device web UI.
+            if result.tv_logical_address ~= nil then
+                g_tvAddress = tonumber(result.tv_logical_address) or 0
+            end
+            if result.audio_logical_address ~= nil then
+                g_audioAddress = tonumber(result.audio_logical_address) or 5
+            end
+            if result.volume_target ~= nil then
+                g_volumeTarget = tostring(result.volume_target)
+            end
+            if result.power_on_command ~= nil then
+                g_powerOnCmd = tostring(result.power_on_command)
+            end
+
             C4:UpdateProperty("Driver Status",
                 "Connected | " .. (result.wifi_ip or "?") ..
                 " | Heap: " .. tostring(result.heap_free or 0) .. "B" ..
-                " | Up: " .. string.format("%.1f", (result.uptime_ms or 0) / 60000) .. "m")
+                " | Up: " .. string.format("%.1f", (result.uptime_ms or 0) / 60000) .. "m" ..
+                " | TV@" .. tostring(g_tvAddress) .. " Aud@" .. tostring(g_audioAddress))
         else
             SetOffline()
         end

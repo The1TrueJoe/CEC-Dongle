@@ -72,16 +72,14 @@ void CecDriver::loop() {
         std::vector<uint8_t> data(frame->begin() + 1, frame->end());
         framesQueue_.popFront();
 
-        // Fire user callback
-        bool handled = false;
+        // Fire user callback (for logging/notification — does not suppress built-in handlers)
         if (callback_) {
             callback_(srcAddr, dstAddr, data);
-            handled = true;
         }
 
-        // Built-in handlers for directly addressed messages
+        // Built-in handlers always run for directly-addressed messages
         bool isDirectlyAddressed = (dstAddr != 0xF && dstAddr == address_);
-        if (isDirectlyAddressed && !handled) {
+        if (isDirectlyAddressed) {
             tryBuiltinHandler(srcAddr, dstAddr, data);
         }
     }
@@ -105,8 +103,8 @@ void CecDriver::tryBuiltinHandler(uint8_t source, uint8_t destination,
 
     uint8_t opcode = data[0];
     switch (opcode) {
-        case 0x9F: // Get CEC Version → reply CEC Version 1.3a
-            send(address_, source, {0x9E, 0x04});
+        case 0x9F: // Get CEC Version → reply CEC Version 1.4
+            send(address_, source, {0x9E, 0x05});
             break;
 
         case 0x8F: // Give Device Power Status → Report Power Status: On
@@ -129,13 +127,78 @@ void CecDriver::tryBuiltinHandler(uint8_t source, uint8_t destination,
             break;
         }
 
+        case 0x8C: // Give Device Vendor ID → Device Vendor ID broadcast (unknown vendor)
+            send(address_, 0xF, {0x87, 0x00, 0x00, 0x00});
+            break;
+
+        case 0x8D: // Menu Request → Menu Status: Deactivated (0x02)
+            send(address_, source, {0x8E, 0x02});
+            break;
+
         case 0x00: // Feature Abort — ignore
+            break;
+
+        case 0xFF: // Abort — do not reply
             break;
 
         default: // Unsupported → Feature Abort
             send(address_, source, {0x00, opcode, 0x00});
             break;
     }
+}
+
+// ── Logical address negotiation ──────────────────────────────────────────────
+
+bool CecDriver::negotiate(const String &deviceType) {
+    // Priority lists per CEC spec for each device type
+    static const uint8_t PLAYBACK[]  = {4, 8, 11};
+    static const uint8_t AUDIO[]     = {5};
+    static const uint8_t RECORDING[] = {1, 2, 9};
+    static const uint8_t TUNER[]     = {3, 6, 7, 10};
+    static const uint8_t FREE_USE[]  = {14};
+
+    const uint8_t *list;
+    size_t len;
+
+    if      (deviceType == "audio")     { list = AUDIO;     len = 1; }
+    else if (deviceType == "recording") { list = RECORDING; len = 3; }
+    else if (deviceType == "tuner")     { list = TUNER;     len = 4; }
+    else if (deviceType == "free")      { list = FREE_USE;  len = 1; }
+    else                                { list = PLAYBACK;  len = 3; } // default: playback
+
+    for (size_t i = 0; i < len; i++) {
+        uint8_t candidate = list[i];
+        delay(20); // brief bus quiet time between attempts
+
+        // Ping: single-byte frame where src == dst == candidate.
+        // NoAck  → nobody at that address → claim it.
+        // Success → someone ACK'd → address is taken.
+        CecFrame ping(candidate, candidate, {});
+        auto result = sendFrame(ping, false);
+
+        if (result == SendResult::NoAck) {
+            address_ = candidate;
+            Serial.printf("[CEC] Negotiated logical address 0x%X (%s)\n",
+                          candidate, CEC_LOGICAL_NAMES[candidate]);
+            return true;
+        }
+        Serial.printf("[CEC] Address 0x%X is taken, trying next\n", candidate);
+    }
+
+    address_ = 0xF; // Unregistered — limited functionality
+    Serial.println("[CEC] All preferred addresses taken, using Unregistered (0xF)");
+    return false;
+}
+
+void CecDriver::broadcastPhysicalAddress() {
+    if (address_ == 0xF) return; // cannot send as unregistered
+    send(address_, 0xF, {
+        0x84,
+        (uint8_t)(physicalAddress_ >> 8),
+        (uint8_t)(physicalAddress_ & 0xFF),
+        logicalAddressToDeviceType(address_)
+    });
+    Serial.printf("[CEC] Broadcast physical address 0x%04X\n", physicalAddress_);
 }
 
 // ── Send ────────────────────────────────────────────────────────────────────

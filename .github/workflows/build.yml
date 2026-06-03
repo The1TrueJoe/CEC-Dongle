@@ -1,0 +1,96 @@
+name: Build
+
+on:
+  push:
+    branches: ['**']
+  release:
+    types: [published]
+
+permissions:
+  contents: write   # needed to upload release assets
+
+jobs:
+  # ── Firmware ──────────────────────────────────────────────────────────────
+  firmware:
+    name: Build Firmware
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install UI build dependencies
+        run: pip install -r firmware/requirements-ui.txt
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build firmware binary
+        run: pio run -e slwf08
+        working-directory: firmware
+
+      - name: Build LittleFS filesystem image
+        run: pio run -e slwf08 --target buildfs
+        working-directory: firmware
+
+      # Stage both binaries with human-readable names for artifact upload
+      - name: Stage artifacts
+        run: |
+          mkdir -p dist
+          cp firmware/.pio/build/slwf08/firmware.bin  dist/cec-dongle-firmware.bin
+          cp firmware/.pio/build/slwf08/littlefs.bin  dist/cec-dongle-littlefs.bin
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach firmware to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/cec-dongle-firmware.bin
+            dist/cec-dongle-littlefs.bin
+
+  # ── Control4 Driver ───────────────────────────────────────────────────────
+  control4-driver:
+    name: Package Control4 Driver
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package .c4z driver
+        uses: snap-one/drivers-driverpackager@v2-rc4
+        with:
+          projectDir: control4
+          c4zproj: control4/driver.xml
+
+      - name: Upload driver artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: control4-driver-${{ github.sha }}
+          path: control4/*.c4z
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach driver to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: control4/*.c4z

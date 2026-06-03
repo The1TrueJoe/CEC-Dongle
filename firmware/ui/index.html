@@ -7,538 +7,356 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="shell">
-    <header class="app-header card">
-      <div>
-        <p class="eyebrow">Smart Home Video Automation</p>
-        <h1>CEC Dongle</h1>
-        <p class="subtitle">A lightweight HDMI-CEC controller for automation, diagnostics, and provisioning.</p>
-      </div>
-      <div class="header-meta">
-        <div class="status-pill" id="headerStatusPill">
-          <span class="status-dot offline" id="headerStatusDot"></span>
-          <span id="headerStatusText">Connecting...</span>
-        </div>
-        <div class="meta-pair">
-          <span class="meta-label">Address</span>
-          <span class="meta-value" id="headerAddress">--</span>
-        </div>
-        <div class="meta-pair">
-          <span class="meta-label">Firmware</span>
-          <span class="meta-value" id="headerVersion">--</span>
-        </div>
-      </div>
-    </header>
 
-    <nav class="top-nav card" aria-label="Primary">
-      <button class="nav-tab active" data-view="overview">Overview</button>
-      <button class="nav-tab" data-view="actions">Actions</button>
-      <button class="nav-tab" data-view="diagnostics">Diagnostics</button>
-      <button class="nav-tab" data-view="devices">Devices</button>
-      <button class="nav-tab" data-view="settings">Settings</button>
-      <button class="nav-tab" data-view="wifi">WiFi</button>
-    </nav>
-
-    <main>
-      <section class="view active" id="view-overview">
-        <div class="hero card">
-          <div>
-            <p class="eyebrow">Gateway Status</p>
-            <h2 id="heroTitle">Automation gateway is starting up</h2>
-            <p class="hero-copy" id="heroCopy">Waiting for the device to report network and CEC details.</p>
-          </div>
-          <div class="hero-actions">
-            <button class="primary-btn" data-api="/api/cec/power/on" data-method="POST">Power On Display</button>
-            <button class="secondary-btn" data-api="/api/cec/power/off" data-method="POST">Standby Room</button>
-            <button class="secondary-btn" data-api="/api/cec/source/active" data-method="POST">Announce Active Source</button>
-          </div>
-        </div>
-
-        <div class="stats-grid">
-          <article class="stat-card card">
-            <span class="stat-label">Network</span>
-            <strong class="stat-value" id="statNetwork">--</strong>
-            <span class="stat-note" id="statIp">Waiting for IP address</span>
-          </article>
-          <article class="stat-card card">
-            <span class="stat-label">CEC Identity</span>
-            <strong class="stat-value" id="statIdentity">--</strong>
-            <span class="stat-note" id="statPhysical">Physical address --</span>
-          </article>
-          <article class="stat-card card">
-            <span class="stat-label">Runtime</span>
-            <strong class="stat-value" id="statUptime">--</strong>
-            <span class="stat-note" id="statHeap">Heap --</span>
-          </article>
-          <article class="stat-card card">
-            <span class="stat-label">UI + OTA</span>
-            <strong class="stat-value" id="statUiMode">--</strong>
-            <span class="stat-note" id="statOta">OTA --</span>
-          </article>
-        </div>
-
-        <div class="overview-grid">
-          <article class="card action-card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Quick Actions</p>
-                <h3>Room Controls</h3>
-              </div>
-              <span class="section-note">Common automation actions</span>
-            </div>
-            <div class="button-grid two-up">
-              <button class="action-btn" data-api="/api/cec/power/on" data-method="POST">
-                <span>Display On</span>
-                <small>Image View On to TV</small>
-              </button>
-              <button class="action-btn danger" data-api="/api/cec/power/off" data-method="POST">
-                <span>Room Off</span>
-                <small>Broadcast standby</small>
-              </button>
-              <button class="action-btn" data-api="/api/cec/source/active" data-method="POST">
-                <span>Set Active Source</span>
-                <small>Broadcast this dongle source</small>
-              </button>
-              <button class="action-btn" data-cec='{"destination":15,"data":[133]}'>
-                <span>Request Active Source</span>
-                <small>Ask all devices to announce</small>
-              </button>
-            </div>
-          </article>
-
-          <article class="card action-card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Source Routing</p>
-                <h3>TV Input Shortcuts</h3>
-              </div>
-              <span class="section-note">Switch input paths</span>
-            </div>
-            <div class="button-grid two-up">
-              <button class="action-btn" data-input="0x1000"><span>HDMI 1</span><small>Set stream path 1.0.0.0</small></button>
-              <button class="action-btn" data-input="0x2000"><span>HDMI 2</span><small>Set stream path 2.0.0.0</small></button>
-              <button class="action-btn" data-input="0x3000"><span>HDMI 3</span><small>Set stream path 3.0.0.0</small></button>
-              <button class="action-btn" data-input="0x4000"><span>HDMI 4</span><small>Set stream path 4.0.0.0</small></button>
-            </div>
-            <div class="inline-form compact-row">
-              <label for="overviewCustomPa">Custom path</label>
-              <input id="overviewCustomPa" placeholder="2100">
-              <button class="secondary-btn" id="sendOverviewPath">Switch</button>
-            </div>
-          </article>
-
-          <article class="card action-card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Audio</p>
-                <h3>Volume and System Audio</h3>
-              </div>
-              <span class="section-note">Targets logical address 5</span>
-            </div>
-            <div class="button-grid three-up">
-              <button class="action-btn" data-api="/api/cec/volume/up" data-method="POST"><span>Volume Up</span><small>User control 0x41</small></button>
-              <button class="action-btn" data-api="/api/cec/volume/down" data-method="POST"><span>Volume Down</span><small>User control 0x42</small></button>
-              <button class="action-btn" data-api="/api/cec/volume/mute" data-method="POST"><span>Mute</span><small>User control 0x43</small></button>
-            </div>
-            <div class="button-row">
-              <button class="secondary-btn" data-cec='{"destination":5,"data":[125]}'>Query System Audio</button>
-              <button class="secondary-btn" data-cec='{"destination":5,"data":[143]}'>Query Power State</button>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Recent Activity</p>
-                <h3>Last Bus Events</h3>
-              </div>
-              <button class="link-btn" id="openDiagnostics">Open diagnostics</button>
-            </div>
-            <div class="event-list" id="overviewEvents">
-              <div class="empty-state">No events yet.</div>
-            </div>
-          </article>
-        </div>
-      </section>
-
-      <section class="view" id="view-actions">
-        <div class="two-column-layout">
-          <article class="card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Display Scenes</p>
-                <h3>TV and Source Workflows</h3>
-              </div>
-            </div>
-            <div class="button-stack">
-              <button class="workflow-btn" data-api="/api/cec/power/on" data-method="POST">
-                <span>Wake the display</span>
-                <small>Send `Image View On` to the TV</small>
-              </button>
-              <button class="workflow-btn" data-api="/api/cec/source/active" data-method="POST">
-                <span>Advertise active source</span>
-                <small>Broadcast this source using the configured physical address</small>
-              </button>
-              <button class="workflow-btn" data-cec='{"destination":0,"data":[143]}'>
-                <span>Read TV power state</span>
-                <small>Query `Give Device Power Status`</small>
-              </button>
-              <button class="workflow-btn danger" data-api="/api/cec/power/off" data-method="POST">
-                <span>Put the room in standby</span>
-                <small>Broadcast `Standby` to the bus</small>
-              </button>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Device Navigation</p>
-                <h3>Non-visual control buttons</h3>
-              </div>
-            </div>
-            <div class="button-grid three-up">
-              <button class="action-btn" data-cec='{"destination":0,"data":[68,0]}'><span>Select</span><small>UCP 0x00</small></button>
-              <button class="action-btn" data-cec='{"destination":0,"data":[68,9]}'><span>Menu</span><small>UCP 0x09</small></button>
-              <button class="action-btn" data-cec='{"destination":0,"data":[68,13]}'><span>Back</span><small>UCP 0x0D</small></button>
-              <button class="action-btn" data-cec='{"destination":0,"data":[68,14]}'><span>Guide</span><small>UCP 0x0E</small></button>
-              <button class="action-btn" data-cec='{"destination":0,"data":[68,53]}'><span>Info</span><small>UCP 0x35</small></button>
-              <button class="action-btn" data-cec='{"destination":0,"data":[68,64]}'><span>Source</span><small>UCP 0x40</small></button>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Playback Transport</p>
-                <h3>Media actions</h3>
-              </div>
-            </div>
-            <div class="button-grid four-up">
-              <button class="action-btn" data-cec='{"destination":0,"data":[68,68]}'><span>Play</span><small>UCP 0x44</small></button>
-              <button class="action-btn" data-cec='{"destination":0,"data":[68,69]}'><span>Stop</span><small>UCP 0x45</small></button>
-              <button class="action-btn" data-cec='{"destination":0,"data":[68,72]}'><span>Rewind</span><small>UCP 0x48</small></button>
-              <button class="action-btn" data-cec='{"destination":0,"data":[68,73]}'><span>Fast Forward</span><small>UCP 0x49</small></button>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Diagnostics Presets</p>
-                <h3>Common queries</h3>
-              </div>
-            </div>
-            <div class="button-grid two-up">
-              <button class="action-btn" data-cec='{"destination":0,"data":[70]}'><span>TV OSD Name</span><small>`Give OSD Name`</small></button>
-              <button class="action-btn" data-cec='{"destination":0,"data":[159]}'><span>TV CEC Version</span><small>`Get CEC Version`</small></button>
-              <button class="action-btn" data-cec='{"destination":0,"data":[131]}'><span>TV Physical Address</span><small>`Give Physical Address`</small></button>
-              <button class="action-btn" data-cec='{"destination":0,"data":[140]}'><span>TV Vendor ID</span><small>`Give Device Vendor ID`</small></button>
-              <button class="action-btn" data-cec='{"destination":0,"data":[145]}'><span>TV Menu Language</span><small>`Get Menu Language`</small></button>
-              <button class="action-btn" data-cec='{"destination":15,"data":[133]}'><span>Who is active?</span><small>Bus-wide source request</small></button>
-            </div>
-          </article>
-        </div>
-      </section>
-
-      <section class="view" id="view-diagnostics">
-        <div class="two-column-layout">
-          <article class="card sticky-card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Command Composer</p>
-                <h3>Build and send raw CEC messages</h3>
-              </div>
-            </div>
-            <div class="form-grid two-up">
-              <div>
-                <label for="builderSource">Source</label>
-                <select id="builderSource">
-                  <option value="">Auto (dongle)</option>
-                  <option value="0">0 · TV</option>
-                  <option value="1">1 · Recording 1</option>
-                  <option value="3">3 · Tuner 1</option>
-                  <option value="4">4 · Playback 1</option>
-                  <option value="5">5 · Audio System</option>
-                  <option value="8">8 · Playback 2</option>
-                  <option value="14">E · Free Use</option>
-                </select>
-              </div>
-              <div>
-                <label for="builderDestination">Destination</label>
-                <select id="builderDestination">
-                  <option value="0">0 · TV</option>
-                  <option value="1">1 · Recording 1</option>
-                  <option value="3">3 · Tuner 1</option>
-                  <option value="4">4 · Playback 1</option>
-                  <option value="5">5 · Audio System</option>
-                  <option value="8">8 · Playback 2</option>
-                  <option value="14">E · Free Use</option>
-                  <option value="15">F · Broadcast</option>
-                </select>
-              </div>
-            </div>
-            <div class="form-grid">
-              <div>
-                <label for="builderOpcode">Opcode</label>
-                <select id="builderOpcode">
-                  <option value="">Select opcode</option>
-                  <option value="04">04 · Image View On</option>
-                  <option value="0D">0D · Text View On</option>
-                  <option value="36">36 · Standby</option>
-                  <option value="44">44 · User Control Pressed</option>
-                  <option value="45">45 · User Control Released</option>
-                  <option value="46">46 · Give OSD Name</option>
-                  <option value="47">47 · Set OSD Name</option>
-                  <option value="70">70 · System Audio Mode Request</option>
-                  <option value="72">72 · Set System Audio Mode</option>
-                  <option value="7D">7D · Give System Audio Mode Status</option>
-                  <option value="82">82 · Active Source</option>
-                  <option value="83">83 · Give Physical Address</option>
-                  <option value="84">84 · Report Physical Address</option>
-                  <option value="85">85 · Request Active Source</option>
-                  <option value="86">86 · Set Stream Path</option>
-                  <option value="8C">8C · Give Device Vendor ID</option>
-                  <option value="8F">8F · Give Device Power Status</option>
-                  <option value="90">90 · Report Power Status</option>
-                  <option value="91">91 · Get Menu Language</option>
-                  <option value="9E">9E · CEC Version</option>
-                  <option value="9F">9F · Get CEC Version</option>
-                </select>
-              </div>
-              <div>
-                <label for="builderOperands">Operands</label>
-                <input id="builderOperands" placeholder="41 or 10 00">
-              </div>
-            </div>
-            <div class="preview-block">
-              <span class="preview-label">Frame Preview</span>
-              <code id="builderPreview">--</code>
-            </div>
-            <div class="button-row">
-              <button class="primary-btn" id="sendBuiltCommand">Send Command</button>
-              <button class="secondary-btn" id="fillActiveSource">Use local active-source payload</button>
-            </div>
-
-            <hr class="divider">
-
-            <div class="section-head compact">
-              <div>
-                <p class="eyebrow">Raw Payload</p>
-                <h3>Direct hex input</h3>
-              </div>
-            </div>
-            <div class="inline-form">
-              <input id="rawHex" placeholder="36 or 44 41 or 82 10 00">
-              <select id="rawDestination">
-                <option value="0">TV</option>
-                <option value="4">Playback 1</option>
-                <option value="5">Audio</option>
-                <option value="8">Playback 2</option>
-                <option value="15">Broadcast</option>
-              </select>
-              <button class="secondary-btn" id="sendRawHex">Send</button>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Bus Monitor</p>
-                <h3>Live CEC traffic</h3>
-              </div>
-              <div class="button-row compact-buttons">
-                <button class="secondary-btn small" id="togglePause">Pause</button>
-                <button class="secondary-btn small" id="clearLog">Clear</button>
-                <button class="secondary-btn small" id="exportLog">Export</button>
-              </div>
-            </div>
-            <div class="monitor-toolbar">
-              <select id="filterDirection">
-                <option value="">Direction</option>
-                <option value="rx">RX</option>
-                <option value="tx">TX</option>
-              </select>
-              <input id="filterSource" placeholder="Src">
-              <input id="filterDestination" placeholder="Dst">
-              <input id="filterOpcode" placeholder="Opcode">
-              <input id="filterText" placeholder="Search text">
-              <label class="checkbox-label"><input id="autoScroll" type="checkbox" checked> Auto-scroll</label>
-            </div>
-            <div class="monitor-stats">
-              <span>Total <strong id="logCount">0</strong></span>
-              <span>RX <strong id="rxCount">0</strong></span>
-              <span>TX <strong id="txCount">0</strong></span>
-            </div>
-            <div class="log-list" id="logList">
-              <div class="empty-state">No CEC events yet.</div>
-            </div>
-          </article>
-        </div>
-      </section>
-
-      <section class="view" id="view-devices">
-        <div class="two-column-layout">
-          <article class="card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Discovery</p>
-                <h3>Find devices on the bus</h3>
-              </div>
-              <button class="primary-btn" id="scanDevices">Scan Bus</button>
-            </div>
-            <p class="body-copy">This sends standard OSD-name and power-state requests to logical addresses 0–14, then summarizes any responses seen in the monitor log.</p>
-            <div class="device-grid" id="deviceGrid">
-              <div class="empty-state">Run a scan to populate discovered devices.</div>
-            </div>
-          </article>
-
-          <article class="card info-card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Reference</p>
-                <h3>CEC addressing guide</h3>
-              </div>
-            </div>
-            <div class="reference-block">
-              <h4>Logical addresses</h4>
-              <ul>
-                <li><strong>0</strong> — TV</li>
-                <li><strong>1</strong> — Recording Device 1</li>
-                <li><strong>4</strong> — Playback Device 1</li>
-                <li><strong>5</strong> — Audio System</li>
-                <li><strong>8</strong> — Playback Device 2</li>
-                <li><strong>E</strong> — Free Use</li>
-                <li><strong>F</strong> — Broadcast</li>
-              </ul>
-            </div>
-            <div class="reference-block">
-              <h4>Physical addresses</h4>
-              <ul>
-                <li><strong>0x1000</strong> — HDMI 1 on the TV</li>
-                <li><strong>0x2000</strong> — HDMI 2 on the TV</li>
-                <li><strong>0x3000</strong> — HDMI 3 on the TV</li>
-                <li><strong>0x4000</strong> — HDMI 4 on the TV</li>
-                <li><strong>0x2100</strong> — HDMI 1 on a device connected to TV HDMI 2</li>
-              </ul>
-            </div>
-          </article>
-        </div>
-      </section>
-
-      <section class="view" id="view-settings">
-        <div class="two-column-layout">
-          <article class="card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">CEC Settings</p>
-                <h3>Gateway configuration</h3>
-              </div>
-            </div>
-            <div class="form-grid two-up">
-              <div>
-                <label for="cfgPin">GPIO Pin</label>
-                <input id="cfgPin" type="number">
-              </div>
-              <div>
-                <label for="cfgAddress">Logical Address</label>
-                <input id="cfgAddress" placeholder="0x05">
-              </div>
-              <div>
-                <label for="cfgPhysical">Physical Address</label>
-                <input id="cfgPhysical" placeholder="0x4000">
-              </div>
-              <div>
-                <label for="cfgOsdName">OSD Name</label>
-                <input id="cfgOsdName">
-              </div>
-              <div>
-                <label for="cfgHostname">Hostname</label>
-                <input id="cfgHostname">
-              </div>
-              <div>
-                <label for="cfgLogBuffer">Log Buffer Size</label>
-                <input id="cfgLogBuffer" type="number">
-              </div>
-            </div>
-            <div class="toggle-row">
-              <label class="checkbox-card"><input id="cfgPromiscuous" type="checkbox"> Promiscuous mode</label>
-              <label class="checkbox-card"><input id="cfgMonitorMode" type="checkbox"> Monitor-only mode</label>
-            </div>
-            <div class="button-row">
-              <button class="primary-btn" id="saveConfig">Save Config</button>
-              <button class="secondary-btn" id="reloadConfig">Reload</button>
-              <button class="secondary-btn" id="restartDevice">Restart</button>
-              <button class="danger-btn" id="resetConfig">Factory Reset</button>
-            </div>
-          </article>
-
-          <article class="card info-card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Runtime Details</p>
-                <h3>System information</h3>
-              </div>
-            </div>
-            <dl class="detail-list" id="systemInfoList">
-              <div><dt>Version</dt><dd>--</dd></div>
-              <div><dt>Hostname</dt><dd>--</dd></div>
-              <div><dt>WiFi</dt><dd>--</dd></div>
-              <div><dt>IP Address</dt><dd>--</dd></div>
-              <div><dt>Heap</dt><dd>--</dd></div>
-              <div><dt>CEC Address</dt><dd>--</dd></div>
-              <div><dt>CEC Physical</dt><dd>--</dd></div>
-              <div><dt>OTA</dt><dd>--</dd></div>
-            </dl>
-            <div class="callout">
-              <strong>OTA updates are enabled.</strong>
-              <p>Use standard Arduino OTA / PlatformIO network upload after the first wired flash.</p>
-            </div>
-          </article>
-        </div>
-      </section>
-
-      <section class="view" id="view-wifi">
-        <div class="two-column-layout">
-          <article class="card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Network Discovery</p>
-                <h3>Available WiFi networks</h3>
-              </div>
-              <button class="primary-btn" id="scanWifi">Scan</button>
-            </div>
-            <div class="wifi-list" id="wifiList">
-              <div class="empty-state">Run a scan to list access points.</div>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Provisioning</p>
-                <h3>Connect this dongle</h3>
-              </div>
-            </div>
-            <div class="form-grid">
-              <div>
-                <label for="wifiSsid">SSID</label>
-                <input id="wifiSsid">
-              </div>
-              <div>
-                <label for="wifiPassword">Password</label>
-                <input id="wifiPassword" type="password">
-              </div>
-            </div>
-            <div class="button-row">
-              <button class="primary-btn" id="connectWifi">Connect</button>
-            </div>
-          </article>
-        </div>
-      </section>
-    </main>
+<header class="topbar">
+  <span class="topbar-brand">CEC Dongle</span>
+  <div class="topbar-meta">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">Connecting&#8230;</span>
+    <code id="statusIp"></code>
   </div>
+  <span class="topbar-spacer"></span>
+  <span class="topbar-uptime" id="statusUptime"></span>
+</header>
 
-  <script src="app.js"></script>
+<nav class="nav">
+  <button class="nav-btn active" data-view="status">Status</button>
+  <button class="nav-btn" data-view="cec">CEC</button>
+  <button class="nav-btn" data-view="network">Network</button>
+  <button class="nav-btn" data-view="bus">Bus Monitor</button>
+  <button class="nav-btn" data-view="firmware">Firmware</button>
+</nav>
+
+<main class="content">
+
+  <!-- Status -->
+  <section class="view active" id="view-status">
+    <div class="status-grid">
+      <div class="card">
+        <div class="card-header">System</div>
+        <table class="info-table">
+          <tr><th>Firmware</th><td id="sysVersion">&#8212;</td></tr>
+          <tr><th>Hostname</th><td id="sysHostname">&#8212;</td></tr>
+          <tr><th>IP Address</th><td><code id="sysIp">&#8212;</code></td></tr>
+          <tr><th>WiFi</th><td id="sysWifi">&#8212;</td></tr>
+          <tr><th>Uptime</th><td id="sysUptime">&#8212;</td></tr>
+          <tr><th>Free Heap</th><td id="sysHeap">&#8212;</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <div class="card-header">CEC Identity</div>
+        <table class="info-table">
+          <tr><th>Logical Address</th><td><code id="cecAddr">&#8212;</code></td></tr>
+          <tr><th>Physical Address</th><td><code id="cecPhys">&#8212;</code></td></tr>
+          <tr><th>OSD Name</th><td id="cecOsd">&#8212;</td></tr>
+          <tr><th>TV Address</th><td><code id="cecTv">&#8212;</code></td></tr>
+          <tr><th>Audio Address</th><td><code id="cecAudio">&#8212;</code></td></tr>
+          <tr><th>Vol Target</th><td id="cecVolTarget">&#8212;</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        Recent Bus Events
+        <button class="btn btn-default btn-sm" onclick="activateView('bus')">Open monitor</button>
+      </div>
+      <div id="recentEvents"><div class="empty">No events yet.</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Quick Actions</div>
+      <div class="btn-row">
+        <button class="btn btn-default" data-api="/api/cec/power/on" data-method="POST">Power On</button>
+        <button class="btn btn-default" data-api="/api/cec/power/off" data-method="POST">Standby</button>
+        <button class="btn btn-default" data-api="/api/cec/source/active" data-method="POST">Active Source</button>
+        <button class="btn btn-default" data-api="/api/cec/volume/up" data-method="POST">Vol +</button>
+        <button class="btn btn-default" data-api="/api/cec/volume/down" data-method="POST">Vol &#8722;</button>
+        <button class="btn btn-default" data-api="/api/cec/volume/mute" data-method="POST">Mute</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- CEC -->
+  <section class="view" id="view-cec">
+    <div class="card">
+      <div class="card-header">Device Identity</div>
+      <table class="cfg-table">
+        <tr>
+          <td class="lbl">OSD Name<span class="hint">Shown to other CEC devices (max 14 chars)</span></td>
+          <td><input type="text" id="cfgOsdName" maxlength="14" placeholder="CEC-Dongle"></td>
+        </tr>
+        <tr>
+          <td class="lbl">Device Type<span class="hint">Determines address pool for auto-negotiate</span></td>
+          <td>
+            <select id="cfgDeviceType">
+              <option value="playback">Playback Device (addrs 4, 8, 11)</option>
+              <option value="audio">Audio System (addr 5)</option>
+              <option value="recording">Recording Device (addrs 1, 2, 9)</option>
+              <option value="tuner">Tuner (addrs 3, 6, 7, 10)</option>
+              <option value="free">Free Use (addr 14)</option>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <td class="lbl">Physical Address<span class="hint">Hex HDMI topology, e.g. 2000 = HDMI 2 on TV</span></td>
+          <td><input type="text" id="cfgPhysical" placeholder="4000" maxlength="4"></td>
+        </tr>
+        <tr>
+          <td class="lbl">Logical Address<span class="hint">Overridden when auto-negotiate is enabled</span></td>
+          <td><input type="number" id="cfgAddress" min="0" max="14" placeholder="4"></td>
+        </tr>
+        <tr>
+          <td class="lbl">Auto-negotiate<span class="hint">Claim a free address at startup (recommended)</span></td>
+          <td><label class="toggle"><input type="checkbox" id="cfgAutoNeg"><span class="toggle-track"></span></label></td>
+        </tr>
+        <tr>
+          <td class="lbl">GPIO Pin<span class="hint">CEC bus signal pin</span></td>
+          <td><input type="number" id="cfgPin" min="0" max="16" placeholder="14"></td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Automation Routing</div>
+      <table class="cfg-table">
+        <tr>
+          <td class="lbl">TV Address<span class="hint">Logical address of the TV (usually 0)</span></td>
+          <td><input type="number" id="cfgTvAddress" min="0" max="14" placeholder="0"></td>
+        </tr>
+        <tr>
+          <td class="lbl">Audio System Address<span class="hint">ARC/eARC receiver address (usually 5)</span></td>
+          <td><input type="number" id="cfgAudioAddress" min="0" max="14" placeholder="5"></td>
+        </tr>
+        <tr>
+          <td class="lbl">Volume Target<span class="hint">Device that receives volume commands</span></td>
+          <td>
+            <select id="cfgVolumeTarget">
+              <option value="audio">Audio System (addr 5)</option>
+              <option value="tv">TV (addr 0)</option>
+              <option value="broadcast">Broadcast (addr F)</option>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <td class="lbl">Power On Command<span class="hint">CEC message sent when turning on TV</span></td>
+          <td>
+            <select id="cfgPowerOnCmd">
+              <option value="image_view_on">Image View On (0x04) &#8212; recommended</option>
+              <option value="text_view_on">Text View On (0x0D)</option>
+              <option value="user_control_power">User Control: Power (0x44 0x6D)</option>
+            </select>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Bus Behaviour</div>
+      <table class="cfg-table">
+        <tr>
+          <td class="lbl">Promiscuous Mode<span class="hint">Log all bus traffic, not just own address</span></td>
+          <td><label class="toggle"><input type="checkbox" id="cfgPromiscuous"><span class="toggle-track"></span></label></td>
+        </tr>
+        <tr>
+          <td class="lbl">Monitor-Only Mode<span class="hint">Never transmit &#8212; passive sniffing only</span></td>
+          <td><label class="toggle"><input type="checkbox" id="cfgMonitorMode"><span class="toggle-track"></span></label></td>
+        </tr>
+        <tr>
+          <td class="lbl">Log Buffer<span class="hint">Max CEC frames kept in memory</span></td>
+          <td><input type="number" id="cfgLogBuffer" min="10" max="500" placeholder="50"></td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="saveConfig">Save &amp; Apply</button>
+      <button class="btn btn-default" id="reloadConfig">Reload</button>
+    </div>
+  </section>
+
+  <!-- Network -->
+  <section class="view" id="view-network">
+    <div class="card">
+      <div class="card-header">Connection</div>
+      <table class="info-table">
+        <tr><th>Status</th><td id="netStatus">&#8212;</td></tr>
+        <tr><th>SSID</th><td id="netSsid">&#8212;</td></tr>
+        <tr><th>IP Address</th><td><code id="netIp">&#8212;</code></td></tr>
+        <tr><th>Hostname</th><td id="netHostname">&#8212;</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Provision</div>
+      <table class="cfg-table">
+        <tr>
+          <td class="lbl">Hostname</td>
+          <td><input type="text" id="cfgHostname" placeholder="cec-dongle"></td>
+        </tr>
+        <tr>
+          <td class="lbl">SSID</td>
+          <td>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input type="text" id="wifiSsid" placeholder="Network name" style="width:180px">
+              <button class="btn btn-default btn-sm" id="scanWifi">Scan</button>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td class="lbl">Password</td>
+          <td><input type="password" id="wifiPassword" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;"></td>
+        </tr>
+      </table>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="connectWifi">Connect</button>
+      </div>
+    </div>
+
+    <div class="card" id="wifiScanCard" style="display:none">
+      <div class="card-header">Nearby Networks</div>
+      <div id="wifiScanResult"><div class="empty">Scanning&#8230;</div></div>
+    </div>
+  </section>
+
+  <!-- Bus Monitor -->
+  <section class="view" id="view-bus">
+    <div class="card">
+      <div class="bus-toolbar">
+        <button class="btn btn-default btn-sm" id="togglePause">Pause</button>
+        <button class="btn btn-default btn-sm" id="clearLog">Clear</button>
+        <button class="btn btn-default btn-sm" id="exportLog">Export</button>
+        <div class="bus-filters">
+          <select id="filterDir" style="width:auto;height:24px;font-size:0.76rem;padding:1px 4px">
+            <option value="">All</option>
+            <option value="rx">RX</option>
+            <option value="tx">TX</option>
+          </select>
+          <input id="filterSrc" placeholder="Src">
+          <input id="filterDst" placeholder="Dst">
+          <input id="filterOp"  placeholder="Op">
+          <input id="filterTxt" placeholder="Search">
+          <label style="display:flex;align-items:center;gap:3px;font-size:0.76rem;color:var(--muted);cursor:pointer">
+            <input type="checkbox" id="autoScroll" checked style="width:auto;height:auto;padding:0"> Scroll
+          </label>
+        </div>
+      </div>
+      <div class="bus-stats">
+        <span>Total <strong id="logTotal">0</strong></span>
+        <span>RX <strong id="logRx">0</strong></span>
+        <span>TX <strong id="logTx">0</strong></span>
+      </div>
+      <div class="log-list" id="logList"><div class="empty">No CEC events yet.</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Send Frame</div>
+      <table class="cfg-table">
+        <tr>
+          <td class="lbl">Source</td>
+          <td>
+            <select id="txSrc">
+              <option value="">Auto (device)</option>
+              <option value="0">0 &#183; TV</option>
+              <option value="1">1 &#183; Recording 1</option>
+              <option value="3">3 &#183; Tuner 1</option>
+              <option value="4">4 &#183; Playback 1</option>
+              <option value="5">5 &#183; Audio System</option>
+              <option value="8">8 &#183; Playback 2</option>
+              <option value="14">E &#183; Free Use</option>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <td class="lbl">Destination</td>
+          <td>
+            <select id="txDst">
+              <option value="0">0 &#183; TV</option>
+              <option value="1">1 &#183; Recording 1</option>
+              <option value="4">4 &#183; Playback 1</option>
+              <option value="5">5 &#183; Audio System</option>
+              <option value="8">8 &#183; Playback 2</option>
+              <option value="14">E &#183; Free Use</option>
+              <option value="15">F &#183; Broadcast</option>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <td class="lbl">Opcode</td>
+          <td>
+            <select id="txOpcode">
+              <option value="">&#8212; select &#8212;</option>
+              <option value="04">04 Image View On</option>
+              <option value="0D">0D Text View On</option>
+              <option value="36">36 Standby</option>
+              <option value="44">44 User Control Pressed</option>
+              <option value="45">45 User Control Released</option>
+              <option value="46">46 Give OSD Name</option>
+              <option value="47">47 Set OSD Name</option>
+              <option value="70">70 System Audio Mode Request</option>
+              <option value="82">82 Active Source</option>
+              <option value="83">83 Give Physical Address</option>
+              <option value="84">84 Report Physical Address</option>
+              <option value="85">85 Request Active Source</option>
+              <option value="86">86 Set Stream Path</option>
+              <option value="8C">8C Give Device Vendor ID</option>
+              <option value="8D">8D Menu Request</option>
+              <option value="8F">8F Give Device Power Status</option>
+              <option value="9F">9F Get CEC Version</option>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <td class="lbl">Operands<span class="hint">Hex bytes, e.g. 41 or 10 00</span></td>
+          <td><input type="text" id="txOperands" placeholder="41 or 10 00"></td>
+        </tr>
+        <tr>
+          <td class="lbl">Preview</td>
+          <td><code id="txPreview" style="color:var(--text-strong)">&#8212;</code></td>
+        </tr>
+      </table>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="sendFrameBtn">Send</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Firmware -->
+  <section class="view" id="view-firmware">
+    <div class="card">
+      <div class="card-header">System Information</div>
+      <table class="info-table">
+        <tr><th>Version</th><td id="fwVersion">&#8212;</td></tr>
+        <tr><th>OTA Methods</th><td>HTTP upload (below) + ArduinoOTA port 8266</td></tr>
+        <tr><th>UI Storage</th><td>LittleFS + gzip</td></tr>
+      </table>
+      <div class="btn-row">
+        <button class="btn btn-default" id="restartBtn">Restart</button>
+        <button class="btn btn-danger"  id="resetBtn">Factory Reset</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Upload Firmware</div>
+      <table class="cfg-table">
+        <tr>
+          <td class="lbl">.bin file<span class="hint">From pio run -e slwf08 &#8594; .pio/build/slwf08/firmware.bin</span></td>
+          <td><input type="file" id="otaFile" accept=".bin"></td>
+        </tr>
+      </table>
+      <div id="otaProgress" style="display:none">
+        <div class="progress-outer"><div class="progress-bar" id="otaBar"></div></div>
+        <div class="progress-label" id="otaLabel">0%</div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="uploadBtn">Upload</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast-wrap" id="toastWrap"></div>
+<script src="app.js"></script>
 </body>
 </html>

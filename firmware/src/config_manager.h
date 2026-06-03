@@ -27,6 +27,18 @@ struct Config {
 
     // Log buffer size
     uint16_t logBufferSize = 50;
+
+    // Control4 / automation integration
+    // These configure how the dongle interprets commands from the automation
+    // controller so that all CEC tuning is done on the device, not in Control4.
+    uint8_t tvLogicalAddress    = 0;              // TV logical address on bus
+    uint8_t audioLogicalAddress = 5;              // Audio System logical address
+    String  volumeTarget        = "audio";        // "audio" | "tv" | "broadcast"
+    String  powerOnCommand      = "image_view_on"; // "image_view_on" | "text_view_on" | "user_control_power"
+
+    // CEC address allocation
+    String  deviceType          = "playback"; // "playback" | "audio" | "recording" | "tuner" | "free"
+    bool    autoNegotiate       = false;      // Auto-negotiate logical address at startup
 };
 
 class ConfigManager {
@@ -69,8 +81,14 @@ public:
         config.cecPhysical    = doc["cec_physical"] | DEFAULT_CEC_PHYSICAL;
         config.cecOsdName     = doc["cec_osd_name"] | "CEC-Dongle";
         config.cecPromiscuous = doc["cec_promiscuous"] | false;
-        config.cecMonitorMode = doc["cec_monitor_mode"] | false;
-        config.logBufferSize  = doc["log_buffer_size"] | 50;
+        config.cecMonitorMode        = doc["cec_monitor_mode"]       | false;
+        config.logBufferSize          = doc["log_buffer_size"]         | 50;
+        config.tvLogicalAddress       = doc["tv_logical_address"]      | 0;
+        config.audioLogicalAddress    = doc["audio_logical_address"]   | 5;
+        config.volumeTarget           = doc["volume_target"]           | "audio";
+        config.powerOnCommand         = doc["power_on_command"]        | "image_view_on";
+        config.deviceType             = doc["device_type"]             | "playback";
+        config.autoNegotiate          = doc["auto_negotiate"]          | false;
 
         Serial.println("[Config] Loaded successfully");
         return true;
@@ -87,8 +105,14 @@ public:
         doc["cec_physical"]     = config.cecPhysical;
         doc["cec_osd_name"]     = config.cecOsdName;
         doc["cec_promiscuous"]  = config.cecPromiscuous;
-        doc["cec_monitor_mode"] = config.cecMonitorMode;
-        doc["log_buffer_size"]  = config.logBufferSize;
+        doc["cec_monitor_mode"]      = config.cecMonitorMode;
+        doc["log_buffer_size"]        = config.logBufferSize;
+        doc["tv_logical_address"]     = config.tvLogicalAddress;
+        doc["audio_logical_address"]  = config.audioLogicalAddress;
+        doc["volume_target"]          = config.volumeTarget;
+        doc["power_on_command"]       = config.powerOnCommand;
+        doc["device_type"]            = config.deviceType;
+        doc["auto_negotiate"]         = config.autoNegotiate;
 
         File f = LittleFS.open(CONFIG_FILE, "w");
         if (!f) {
@@ -122,8 +146,14 @@ public:
         doc["cec_physical"]     = config.cecPhysical;
         doc["cec_osd_name"]     = config.cecOsdName;
         doc["cec_promiscuous"]  = config.cecPromiscuous;
-        doc["cec_monitor_mode"] = config.cecMonitorMode;
-        doc["log_buffer_size"]  = config.logBufferSize;
+        doc["cec_monitor_mode"]     = config.cecMonitorMode;
+        doc["log_buffer_size"]       = config.logBufferSize;
+        doc["tv_logical_address"]    = config.tvLogicalAddress;
+        doc["audio_logical_address"] = config.audioLogicalAddress;
+        doc["volume_target"]         = config.volumeTarget;
+        doc["power_on_command"]      = config.powerOnCommand;
+        doc["device_type"]           = config.deviceType;
+        doc["auto_negotiate"]        = config.autoNegotiate;
         String out;
         serializeJson(doc, out);
         return out;

@@ -41,7 +41,10 @@ void setup() {
     // 2. Start WiFi (AP if no credentials, STA otherwise)
     wifiMgr.begin(cfg.hostname, cfg.wifiSsid, cfg.wifiPassword);
 
-    // 2b. Enable standard ESP OTA
+    // 2b. Enable standard ESP OTA (ArduinoOTA / UDP)
+    // Pause CEC ISR before flash writes; resume (or restart) on completion/error.
+    otaMgr.onBegin([&]() { cecDriver.pause(); });
+    otaMgr.onEnd([&]()   { cecDriver.resume(); });
     otaMgr.begin(cfg.hostname);
 
     // 3. Initialise CEC driver
@@ -56,6 +59,16 @@ void setup() {
         cfg.cecMonitorMode
     );
 
+    // Auto-negotiate logical address if enabled (waits for bus to settle first)
+    delay(250);
+    if (cfg.autoNegotiate) {
+        cecDriver.negotiate(cfg.deviceType);
+    }
+
+    // Announce our physical address to all CEC devices on the bus
+    delay(100);
+    cecDriver.broadcastPhysicalAddress();
+
     // Register CEC message callback → log + serial
     cecDriver.onMessage([](uint8_t src, uint8_t dst, const std::vector<uint8_t> &data) {
         CecFrame f(src, dst, data);
@@ -67,6 +80,9 @@ void setup() {
 
     // 4. Start web server (REST API + UI)
     webServer = new WebServer(cecDriver, configMgr, wifiMgr, cecLog);
+    // Wire HTTP OTA callbacks: pause CEC ISR during flash write, resume after
+    webServer->onOtaBegin([&]() { cecDriver.pause(); });
+    webServer->onOtaEnd([&]()   { cecDriver.resume(); });
     webServer->begin();
 
     Serial.println("[Main] Setup complete ✓");

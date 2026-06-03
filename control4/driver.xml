@@ -36,49 +36,11 @@
             <readonly>false</readonly>
         </property>
         <property>
-            <name>CEC TV Logical Address</name>
-            <type>RANGED_INTEGER</type>
-            <minimum>0</minimum>
-            <maximum>15</maximum>
-            <default>0</default>
-            <readonly>false</readonly>
-        </property>
-        <property>
-            <name>CEC Audio Logical Address</name>
-            <type>RANGED_INTEGER</type>
-            <minimum>0</minimum>
-            <maximum>15</maximum>
-            <default>5</default>
-            <readonly>false</readonly>
-        </property>
-        <property>
             <name>HDMI Input Count</name>
             <type>RANGED_INTEGER</type>
             <minimum>1</minimum>
             <maximum>8</maximum>
             <default>4</default>
-            <readonly>false</readonly>
-        </property>
-        <property>
-            <name>Volume Control Target</name>
-            <type>LIST</type>
-            <items>
-                <item>TV (Address 0)</item>
-                <item>Audio System (Address 5)</item>
-                <item>Broadcast</item>
-            </items>
-            <default>Audio System (Address 5)</default>
-            <readonly>false</readonly>
-        </property>
-        <property>
-            <name>Power On Command</name>
-            <type>LIST</type>
-            <items>
-                <item>Image View On (0x04)</item>
-                <item>Text View On (0x0D)</item>
-                <item>User Control Power (0x44 0x6D)</item>
-            </items>
-            <default>Image View On (0x04)</default>
             <readonly>false</readonly>
         </property>
         <property>
