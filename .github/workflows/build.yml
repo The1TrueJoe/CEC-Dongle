@@ -79,7 +79,7 @@ jobs:
         uses: snap-one/drivers-driverpackager@v2-rc4
         with:
           projectDir: control4
-          c4zproj: driver.xml
+          c4zproj: control4.c4zproj
 
       - name: Upload driver artifact
         uses: actions/upload-artifact@v4

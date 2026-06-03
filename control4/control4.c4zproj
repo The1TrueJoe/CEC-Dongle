@@ -1,0 +1,10 @@
+<!--Copyright 2024-2026. MIT License.-->
+
+<Driver type="c4z" name="cec_dongle" squishLua="false" Encryption="false">
+<Items>
+	<Item type="file" name="driver.xml" c4zDir = "" />
+	<Item type="file" name="driver.lua" c4zDir = "" />
+	<Item type="file" name="devices_sm/cec_dongle.gif" c4zDir = "devices_sm" />
+	<Item type="file" name="devices_lg/cec_dongle.gif" c4zDir = "devices_lg" />
+</Items>
+</Driver>
