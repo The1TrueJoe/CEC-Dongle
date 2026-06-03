@@ -136,7 +136,7 @@
             </classes>
         </connection>
 
-        <!-- Network connection -->
+        <!-- Network connection: TCP push (port 9000) + SDDP auto-discovery -->
         <connection>
             <id>6001</id>
             <facing>6</facing>
@@ -147,8 +147,25 @@
             <videosource>false</videosource>
             <linelevel>false</linelevel>
             <classes>
-                <class><classname>TCP</classname></class>
+                <class>
+                    <classname>TCP</classname>
+                    <ports>
+                        <port>
+                            <number>9000</number>
+                            <auto_connect>True</auto_connect>
+                            <monitor_connection>True</monitor_connection>
+                            <keep_alive>True</keep_alive>
+                        </port>
+                    </ports>
+                </class>
             </classes>
+            <search>
+                <pool>false</pool>
+                <autodiscovery>true</autodiscovery>
+                <sddp>
+                    <search_type>C4:CecDongle</search_type>
+                </sddp>
+            </search>
         </connection>
     </connections>
 
@@ -198,6 +215,20 @@
             <description>Switch to HDMI 4 via CEC Set Stream Path</description>
         </command>
 
+        <!-- Status / Query -->
+        <command>
+            <name>Query TV Power Status</name>
+            <description>Send CEC 0x8F to TV requesting its current power state (reply updates state tracker)</description>
+        </command>
+        <command>
+            <name>Request Active Source</name>
+            <description>Broadcast CEC 0x85 to ask which device is the active source</description>
+        </command>
+        <command>
+            <name>Poll CEC State</name>
+            <description>Immediately read decoded CEC TV state from the dongle</description>
+        </command>
+
         <!-- Raw CEC -->
         <command>
             <name>Send Raw CEC</name>
@@ -228,6 +259,10 @@
         <action>
             <name>Refresh CEC Log</name>
             <command>RefreshLog</command>
+        </action>
+        <action>
+            <name>Poll CEC State</name>
+            <command>PollCecState</command>
         </action>
     </actions>
 

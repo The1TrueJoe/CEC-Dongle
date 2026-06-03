@@ -13,15 +13,18 @@
 #include "cec_driver.h"
 #include "ota_manager.h"
 #include "web_server.h"
+#include "sddp_server.h"
 
 // ── Global instances ────────────────────────────────────────────────────────
 
 ConfigManager configMgr;
 WiFiManager   wifiMgr;
 CecDriver     cecDriver;
-CecEventLog   cecLog;
-OtaManager    otaMgr;
-WebServer    *webServer = nullptr;
+CecEventLog     cecLog;
+CecStateTracker cecState;
+OtaManager      otaMgr;
+SddpServer      sddpServer;
+WebServer      *webServer = nullptr;
 
 // ── Setup ───────────────────────────────────────────────────────────────────
 
@@ -73,13 +76,16 @@ void setup() {
     cecDriver.onMessage([](uint8_t src, uint8_t dst, const std::vector<uint8_t> &data) {
         CecFrame f(src, dst, data);
         cecLog.add("rx", f);
+        if (cecState.update(src, dst, data) && webServer) {
+            webServer->push(cecState.toJson());
+        }
         Serial.printf("[CEC RX] %s  =>  %s\n",
                       f.toHexString().c_str(),
                       f.toReadableString().c_str());
     });
 
     // 4. Start web server (REST API + UI)
-    webServer = new WebServer(cecDriver, configMgr, wifiMgr, cecLog);
+    webServer = new WebServer(cecDriver, configMgr, wifiMgr, cecLog, cecState);
     // Wire HTTP OTA callbacks: pause CEC ISR during flash write, resume after
     webServer->onOtaBegin([&]() { cecDriver.pause(); });
     webServer->onOtaEnd([&]()   { cecDriver.resume(); });
@@ -90,8 +96,16 @@ void setup() {
 
 // ── Loop ────────────────────────────────────────────────────────────────────
 
+// Start SDDP once STA WiFi connects; re-announced automatically on IP change.
+static bool sddpStarted = false;
+
 void loop() {
     wifiMgr.loop();
+    if (!sddpStarted && wifiMgr.isConnected()) {
+        sddpServer.begin();
+        sddpStarted = true;
+    }
+    sddpServer.loop();
     otaMgr.handle();
     cecDriver.loop();
 }

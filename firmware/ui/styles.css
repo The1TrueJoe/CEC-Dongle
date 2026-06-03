@@ -38,9 +38,9 @@ body {
   border-bottom: 1px solid var(--border);
   display:       flex;
   align-items:   center;
-  gap:           18px;
-  padding:       0 18px;
-  height:        44px;
+  gap:           12px;
+  padding:       0 14px;
+  height:        46px;
 }
 
 .topbar-brand {
@@ -57,12 +57,17 @@ body {
   gap:         6px;
   font-size:   0.82rem;
   color:       var(--muted);
+  min-width:   0;
+  overflow:    hidden;
 }
 
 .topbar-meta code {
-  font-family: var(--mono);
-  color:       var(--text);
-  font-size:   0.82rem;
+  font-family:   var(--mono);
+  color:         var(--text);
+  font-size:     0.82rem;
+  overflow:      hidden;
+  text-overflow: ellipsis;
+  white-space:   nowrap;
 }
 
 .dot {
@@ -75,11 +80,12 @@ body {
 .dot.on  { background: var(--success); }
 .dot.ap  { background: var(--warning); }
 
-.topbar-spacer { flex: 1; }
+.topbar-spacer { flex: 1; min-width: 0; }
 
 .topbar-uptime {
-  font-size: 0.78rem;
-  color:     var(--muted);
+  font-size:   0.78rem;
+  color:       var(--muted);
+  white-space: nowrap;
 }
 
 /* ── Nav ───────────────────────────────────────────────────────────────── */
@@ -87,9 +93,10 @@ body {
   background:      var(--surface);
   border-bottom:   1px solid var(--border);
   display:         flex;
-  padding:         0 14px;
+  padding:         0 10px;
   overflow-x:      auto;
   scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
 .nav::-webkit-scrollbar { display: none; }
@@ -103,9 +110,10 @@ body {
   font:          inherit;
   font-size:     0.84rem;
   font-weight:   500;
-  padding:       10px 11px;
+  padding:       12px 10px;
   white-space:   nowrap;
   transition:    color 0.12s, border-color 0.12s;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .nav-btn:hover  { color: var(--text); }
@@ -115,7 +123,7 @@ body {
 .content {
   max-width: 960px;
   margin:    0 auto;
-  padding:   22px 18px;
+  padding:   18px 14px;
 }
 
 .view        { display: none; }
@@ -144,8 +152,8 @@ body {
 
 /* ── Info table ────────────────────────────────────────────────────────── */
 .info-table {
-  width:            100%;
-  border-collapse:  collapse;
+  width:           100%;
+  border-collapse: collapse;
 }
 
 .info-table tr + tr td,
@@ -153,7 +161,7 @@ body {
 
 .info-table th,
 .info-table td {
-  padding:        7px 13px;
+  padding:        8px 13px;
   text-align:     left;
   vertical-align: middle;
 }
@@ -161,18 +169,18 @@ body {
 .info-table th {
   color:       var(--muted);
   font-weight: 500;
-  width:       200px;
+  width:       160px;
   white-space: nowrap;
 }
 
-.info-table td   { color: var(--text-strong); }
+.info-table td { color: var(--text-strong); }
 
 .info-table code {
   font-family: var(--mono);
   font-size:   0.9rem;
 }
 
-/* ── Config form table ─────────────────────────────────────────────────── */
+/* ── Config form ───────────────────────────────────────────────────────── */
 .cfg-table {
   width:           100%;
   border-collapse: collapse;
@@ -181,12 +189,12 @@ body {
 .cfg-table tr + tr td { border-top: 1px solid var(--border); }
 
 .cfg-table td {
-  padding:        7px 13px;
+  padding:        9px 13px;
   vertical-align: middle;
 }
 
 .cfg-table .lbl {
-  width:       210px;
+  width:       200px;
   color:       var(--text);
   font-weight: 500;
   white-space: nowrap;
@@ -197,7 +205,8 @@ body {
   font-size:   0.76rem;
   color:       var(--muted);
   font-weight: 400;
-  margin-top:  1px;
+  margin-top:  2px;
+  white-space: normal;
 }
 
 /* ── Form controls ─────────────────────────────────────────────────────── */
@@ -212,12 +221,13 @@ select {
   color:         var(--text-strong);
   font:          inherit;
   font-size:     0.9rem;
-  padding:       4px 7px;
-  height:        28px;
+  padding:       5px 8px;
+  height:        32px;
   outline:       none;
   transition:    border-color 0.12s;
-  width:         240px;
+  width:         220px;
   max-width:     100%;
+  -webkit-appearance: none;
 }
 
 input[type="text"]:focus,
@@ -225,15 +235,15 @@ input[type="number"]:focus,
 input[type="password"]:focus,
 select:focus { border-color: var(--accent); }
 
-input[type="file"] { height: auto; padding: 3px 5px; width: 280px; }
+input[type="file"] { height: auto; padding: 4px 6px; width: 260px; }
 
 select { cursor: pointer; }
 
 /* Toggle switch */
 .toggle {
   position:    relative;
-  width:       34px;
-  height:      18px;
+  width:       38px;
+  height:      22px;
   flex-shrink: 0;
   display:     inline-block;
 }
@@ -258,10 +268,10 @@ select { cursor: pointer; }
 .toggle-track::after {
   content:       '';
   position:      absolute;
-  top:           2px;
-  left:          2px;
-  width:         12px;
-  height:        12px;
+  top:           3px;
+  left:          3px;
+  width:         14px;
+  height:        14px;
   background:    #fff;
   border-radius: 50%;
   transition:    transform 0.18s;
@@ -277,11 +287,12 @@ select { cursor: pointer; }
   font:          inherit;
   font-size:     0.84rem;
   font-weight:   500;
-  height:        28px;
-  padding:       0 11px;
+  height:        32px;
+  padding:       0 13px;
   line-height:   1;
   transition:    background 0.12s, border-color 0.12s;
   white-space:   nowrap;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .btn-primary  { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -293,13 +304,13 @@ select { cursor: pointer; }
 .btn-danger   { background: transparent; border-color: var(--danger); color: #e08080; }
 .btn-danger:hover { background: rgba(196,64,64,0.15); }
 
-.btn-sm { height: 24px; padding: 0 8px; font-size: 0.78rem; }
+.btn-sm { height: 26px; padding: 0 9px; font-size: 0.78rem; }
 
 .btn-row {
   display:    flex;
   gap:        8px;
   flex-wrap:  wrap;
-  padding:    9px 13px;
+  padding:    10px 13px;
   border-top: 1px solid var(--border);
 }
 
@@ -309,10 +320,6 @@ select { cursor: pointer; }
   grid-template-columns: 1fr 1fr;
   gap:                   14px;
   margin-bottom:         14px;
-}
-
-@media (max-width: 620px) {
-  .status-grid { grid-template-columns: 1fr; }
 }
 
 /* ── Bus monitor ───────────────────────────────────────────────────────── */
@@ -336,15 +343,15 @@ select { cursor: pointer; }
 .bus-filters input,
 .bus-filters select {
   width:     auto;
-  height:    24px;
+  height:    26px;
   padding:   1px 5px;
   font-size: 0.76rem;
 }
 
-.bus-filters input[placeholder="Search"] { width: 110px; }
+.bus-filters input[placeholder="Search"] { width: 100px; }
 .bus-filters input[placeholder="Src"],
 .bus-filters input[placeholder="Dst"],
-.bus-filters input[placeholder="Op"]  { width: 40px; }
+.bus-filters input[placeholder="Op"]  { width: 38px; }
 
 .bus-stats {
   display:       flex;
@@ -362,14 +369,15 @@ select { cursor: pointer; }
   font-size:   0.76rem;
   max-height:  460px;
   overflow-y:  auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .log-entry {
   display:     grid;
   grid-template-columns: 64px 28px 1fr auto auto;
-  gap:         6px;
+  gap:         5px;
   align-items: center;
-  padding:     3px 13px;
+  padding:     4px 13px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -380,12 +388,12 @@ select { cursor: pointer; }
 .log-dir  { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; color: var(--muted); }
 .log-dir.rx { color: #7ab8e8; }
 .log-dir.tx { color: #5abf8a; }
-.log-hex  { color: var(--text-strong); }
+.log-hex  { color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-msg  { color: var(--muted); font-family: var(--sans); font-size: 0.76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.log-copy { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.68rem; padding: 1px 3px; }
+.log-copy { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.68rem; padding: 2px 4px; }
 .log-copy:hover { color: var(--text); }
 
-/* ── WiFi table ────────────────────────────────────────────────────────── */
+/* ── WiFi list ─────────────────────────────────────────────────────────── */
 .wifi-list {
   width:           100%;
   border-collapse: collapse;
@@ -393,7 +401,7 @@ select { cursor: pointer; }
 
 .wifi-list tr + tr td { border-top: 1px solid var(--border); }
 
-.wifi-list td { padding: 7px 13px; vertical-align: middle; }
+.wifi-list td { padding: 9px 13px; vertical-align: middle; }
 
 .wifi-list tr           { cursor: pointer; }
 .wifi-list tr:hover td  { background: var(--surface-alt); }
@@ -407,7 +415,7 @@ select { cursor: pointer; }
   background:    var(--surface-alt);
   border-radius: 999px;
   overflow:      hidden;
-  margin:        6px 13px;
+  margin:        8px 13px 4px;
 }
 
 .progress-bar {
@@ -420,7 +428,7 @@ select { cursor: pointer; }
 .progress-label {
   font-size: 0.76rem;
   color:     var(--muted);
-  padding:   2px 13px 7px;
+  padding:   2px 13px 8px;
 }
 
 /* ── Misc ──────────────────────────────────────────────────────────────── */
@@ -442,6 +450,7 @@ code { font-family: var(--mono); }
   gap:            6px;
   z-index:        9999;
   pointer-events: none;
+  max-width:      calc(100vw - 36px);
 }
 
 .toast {
@@ -450,8 +459,9 @@ code { font-family: var(--mono); }
   border-radius: var(--r);
   color:         var(--text);
   font-size:     0.84rem;
-  padding:       7px 12px;
+  padding:       8px 13px;
   animation:     toastIn 0.18s ease;
+  word-break:    break-word;
 }
 
 .toast.ok  { border-left: 3px solid var(--success); }
@@ -462,12 +472,80 @@ code { font-family: var(--mono); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Responsive ────────────────────────────────────────────────────────── */
-@media (max-width: 580px) {
-  .content { padding: 14px 12px; }
-  .cfg-table .lbl { width: 130px; font-size: 0.82rem; }
-  input[type="text"], input[type="number"], input[type="password"], select { width: 100%; }
-  .log-entry { grid-template-columns: 48px 24px 1fr; }
-  .log-msg, .log-copy { display: none; }
+/* ══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE — tablet (≤ 680px)
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 680px) {
+  .status-grid { grid-template-columns: 1fr; }
+  .info-table th { width: 130px; }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE — mobile (≤ 560px)
+   ══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 560px) {
+  html { font-size: 14px; }
+
+  .content { padding: 12px 10px; }
+
+  /* Larger nav touch targets */
+  .nav-btn { padding: 13px 9px; }
+
+  /* Bigger buttons */
+  .btn     { height: 40px; padding: 0 15px; font-size: 0.92rem; }
+  .btn-sm  { height: 32px; padding: 0 10px; font-size: 0.82rem; }
+
+  /* ── Stack cfg-table rows: label above input ── */
+  .cfg-table,
+  .cfg-table tbody,
+  .cfg-table tr,
+  .cfg-table td { display: block; width: 100%; }
+
+  /* Dividing line on the row, not individual cells */
+  .cfg-table tr + tr { border-top: 1px solid var(--border); }
+  .cfg-table tr + tr td { border-top: none; }
+
+  .cfg-table .lbl {
+    width:     auto;
+    padding:   10px 13px 3px;
+    font-size: 0.88rem;
+  }
+
+  .cfg-table td:not(.lbl) { padding: 4px 13px 11px; }
+
+  /* Full-width controls in stacked rows */
+  .cfg-table input[type="text"],
+  .cfg-table input[type="number"],
+  .cfg-table input[type="password"],
+  .cfg-table select { width: 100%; max-width: 100%; }
+
+  /* ── Stack info-table rows ── */
+  .info-table,
+  .info-table tbody,
+  .info-table tr,
+  .info-table th,
+  .info-table td { display: block; width: 100%; }
+
+  .info-table tr + tr       { border-top: 1px solid var(--border); }
+  .info-table tr + tr th,
+  .info-table tr + tr td    { border-top: none; }
+
+  .info-table th {
+    width:          auto;
+    padding:        8px 13px 1px;
+    font-size:      0.76rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .info-table td { padding: 1px 13px 8px; }
+
+  /* ── Bus monitor — compact on mobile ── */
+  .log-entry { grid-template-columns: 52px 26px 1fr; }
+  .log-msg, .log-copy { display: none; }
+
+  .bus-filters input[placeholder="Search"] { width: 70px; flex: 1; }
+
+  /* Topbar: hide uptime */
+  .topbar-uptime { display: none; }
+}

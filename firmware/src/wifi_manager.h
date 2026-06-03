@@ -108,7 +108,7 @@ public:
         String json = "[";
         for (int i = 0; i < n; i++) {
             if (i > 0) json += ",";
-            json += "{\"ssid\":\"" + WiFi.SSID(i) + "\","
+            json += "{\"ssid\":\"" + escSsid(WiFi.SSID(i)) + "\","
                     "\"rssi\":" + String(WiFi.RSSI(i)) + ","
                     "\"encrypted\":" + String(WiFi.encryptionType(i) != ENC_TYPE_NONE ? "true" : "false") + "}";
         }
@@ -118,6 +118,23 @@ public:
     }
 
 private:
+    // Minimal JSON string escaping for SSID values embedded in hand-built JSON.
+    // An SSID can contain '"', '\', or control characters that would break the JSON.
+    static String escSsid(const String &s) {
+        String out;
+        out.reserve(s.length() + 4);
+        for (size_t i = 0; i < s.length(); i++) {
+            const char c = s[i];
+            if      (c == '"')  out += F("\\\"");
+            else if (c == '\\') out += F("\\\\");
+            else if (c == '\n') out += F("\\n");
+            else if (c == '\r') out += F("\\r");
+            else if ((uint8_t)c < 0x20) { char esc[7]; snprintf(esc, sizeof(esc), "\\u%04X", (uint8_t)c); out += esc; }
+            else                out += c;
+        }
+        return out;
+    }
+
     WiFiManagerState state_ = WiFiManagerState::Idle;
     DNSServer dnsServer_;
     String hostname_;

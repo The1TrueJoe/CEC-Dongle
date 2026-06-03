@@ -47,6 +47,10 @@ INPUT_PHYSICAL_ADDRESSES = {
 -- Control4 input connection IDs
 INPUT_BINDING_BASE = 2001 -- HDMI 1 = 2001, HDMI 2 = 2002, etc.
 
+-- TCP push connection — dongle streams state changes on port 9000
+TCP_BINDING = 6001
+TCP_PORT    = 9000
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- STATE
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -59,11 +63,16 @@ g_tvAddress     = 0
 g_audioAddress  = 5
 g_volumeTarget  = "audio"   -- "audio" | "tv" | "broadcast"
 g_powerOnCmd    = "image_view_on" -- "image_view_on" | "text_view_on" | "user_control_power"
-g_debugMode     = false
-g_powerState    = "OFF"
-g_currentInput  = 1
-g_pollTimer     = nil
-g_isOnline      = false
+g_debugMode         = false
+g_powerState        = "OFF"
+g_currentInput      = 1
+g_pollTimer         = nil
+g_lastTvPower       = "unknown"
+g_lastActiveInput   = 0
+g_lastVolume        = -1
+g_lastMute          = nil
+g_tcpBuffer         = ""   -- partial-line buffer for the TCP push stream
+g_isOnline          = false
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- LIFECYCLE
@@ -76,8 +85,9 @@ function OnDriverInit()
     -- Read properties
     ReadProperties()
 
-    -- Set up poll timer
+    -- Set up status poll timer and TCP push connection
     SetupPollTimer()
+    SetupTcpConnection()
 end
 
 function OnDriverLateInit()
@@ -90,6 +100,7 @@ function OnDriverDestroyed()
         C4:KillTimer(g_pollTimer)
         g_pollTimer = nil
     end
+    C4:NetDisconnect(TCP_BINDING)
     dbg("Driver destroyed")
 end
 
@@ -102,6 +113,7 @@ function OnPropertyChanged(strProperty)
 
     if strProperty == "Dongle IP Address" then
         g_dongleIP = Properties["Dongle IP Address"] or ""
+        SetupTcpConnection()
         PollStatus()
 
     elseif strProperty == "Poll Interval (seconds)" then
@@ -114,9 +126,9 @@ function OnPropertyChanged(strProperty)
 end
 
 function ReadProperties()
-    g_dongleIP     = Properties["Dongle IP Address"] or ""
-    g_pollInterval = tonumber(Properties["Poll Interval (seconds)"]) or 30
-    g_debugMode    = (Properties["Debug Mode"] == "On")
+    g_dongleIP          = Properties["Dongle IP Address"] or ""
+    g_pollInterval      = tonumber(Properties["Poll Interval (seconds)"]) or 30
+    g_debugMode         = (Properties["Debug Mode"] == "On")
     -- CEC routing settings (tvAddress, audioAddress, volumeTarget, powerOnCmd)
     -- are NOT stored as Control4 properties. They are configured on the dongle
     -- web UI and fetched from /api/status on each poll.
@@ -143,8 +155,108 @@ function OnTimerExpired(idTimer)
     end
 end
 
--- ═══════════════════════════════════════════════════════════════════════════
--- REST API HELPERS
+-- ═══════════════════════════════════════════════════════════════════════════-- TCP PUSH CONNECTION
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Point binding 6001 at the dongle's TCP push port (9000).
+-- Control4 auto-connects and auto-reconnects; the driver just sets the address.
+function SetupTcpConnection()
+    if g_dongleIP == "" then
+        dbg("TCP push: no IP — skipping")
+        return
+    end
+    C4:SetConnectionAddressPort(TCP_BINDING, g_dongleIP, TCP_PORT)
+    dbg("TCP push configured → " .. g_dongleIP .. ":" .. TCP_PORT)
+end
+
+-- Fires when the TCP push connection state changes.
+-- On connect: sync initial state via one-shot HTTP GET so C4 is accurate immediately.
+function NetworkConnectionChanged(idBinding, bConnected)
+    if idBinding ~= TCP_BINDING then return end
+    if bConnected then
+        dbg("TCP push connected — syncing initial state")
+        g_tcpBuffer = ""
+        -- Proactive CEC queries so the dongle state tracker has fresh data
+        SendCEC(g_tvAddress, {0x8F})  -- Give Device Power Status → reply 0x90
+        SendCEC(15, {0x85})           -- Request Active Source (broadcast) → reply 0x82
+        -- Immediate HTTP GET for current state (push arrives after CEC replies)
+        PollCecState()
+    else
+        dbg("TCP push disconnected — waiting for auto-reconnect")
+    end
+end
+
+-- Fires for every chunk of data arriving on the TCP push binding.
+-- Buffers incomplete lines and processes each complete newline-delimited JSON line.
+function ReceivedFromNetwork(idBinding, strData)
+    if idBinding ~= TCP_BINDING then return end
+    g_tcpBuffer = g_tcpBuffer .. strData
+    -- Safety cap: if no newlines arrive for a long time the buffer would grow
+    -- unbounded. Discard and resync rather than running out of memory.
+    if #g_tcpBuffer > 4096 then
+        dbg("TCP buffer overflow — discarding (malformed stream?)")
+        g_tcpBuffer = ""
+        return
+    end
+    while true do
+        local nl = g_tcpBuffer:find("\n", 1, true)
+        if not nl then break end
+        local line = g_tcpBuffer:sub(1, nl - 1)
+        g_tcpBuffer = g_tcpBuffer:sub(nl + 1)
+        if line ~= "" then
+            ApplyCecState(line)
+        end
+    end
+end
+
+-- Decode a CEC state JSON string and fire the appropriate Control4 proxy events
+-- when power, active input, volume, or mute changes are detected.
+function ApplyCecState(jsonStr)
+    local ok, s = pcall(C4.JsonDecode, C4, jsonStr)
+    if not ok or type(s) ~= "table" then
+        dbg("ApplyCecState: parse error: " .. tostring(jsonStr):sub(1, 80))
+        return
+    end
+
+    -- Power state
+    local rawPower = tostring(s.tv_power or "unknown")
+    local c4Power  = nil
+    if rawPower == "on" or rawPower == "turning_on" then
+        c4Power = "ON"
+    elseif rawPower == "standby" or rawPower == "off" then
+        c4Power = "OFF"
+    end
+    if c4Power and c4Power ~= g_lastTvPower then
+        g_lastTvPower = c4Power
+        g_powerState  = c4Power
+        C4:SendToProxy(1, "POWER_STATE_CHANGED", { POWER_STATE = c4Power })
+        dbg("CEC push: power → " .. c4Power)
+    end
+
+    -- Active HDMI input (top nibble of CEC physical address)
+    local inputNum = tonumber(s.active_input) or 0
+    if inputNum >= 1 and inputNum <= 8 and inputNum ~= g_lastActiveInput then
+        g_lastActiveInput = inputNum
+        g_currentInput    = inputNum
+        local bindingId   = INPUT_BINDING_BASE + inputNum - 1
+        C4:SendToProxy(1, "INPUT_CHANGED", { INPUT = tostring(bindingId) })
+        dbg("CEC push: active input → HDMI " .. inputNum .. " (binding " .. bindingId .. ")")
+    end
+
+    -- Volume / mute — only fire when value changes to avoid spamming C4
+    local vol = tonumber(s.volume) or -1
+    if vol >= 0 and vol ~= g_lastVolume then
+        g_lastVolume = vol
+        C4:SendToProxy(1, "VOLUME_CHANGED", { VOLUME_LEVEL = tostring(vol) })
+    end
+    local mute = s.mute
+    if mute ~= nil and mute ~= g_lastMute then
+        g_lastMute = mute
+        C4:SendToProxy(1, "MUTE_CHANGED", { MUTE = (mute == true) and "True" or "False" })
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════-- REST API HELPERS
 -- ═══════════════════════════════════════════════════════════════════════════
 
 function BuildURL(path)
@@ -246,6 +358,7 @@ function SetOnline()
     if not g_isOnline then
         g_isOnline = true
         C4:SendToProxy(1, "ONLINE_CHANGED", { STATE = "True" })
+        SetupTcpConnection()
         dbg("Dongle is ONLINE")
     end
 end
@@ -268,6 +381,18 @@ function GetVolumeDestination()
     elseif g_volumeTarget == "broadcast" then return 15
     else return g_audioAddress
     end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CEC STATE POLLING
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- One-shot HTTP state sync — called when the TCP push connection first
+-- establishes, giving Control4 immediate state without waiting for a CEC event.
+function PollCecState()
+    DoGet("/api/cec/state", function(strData)
+        ApplyCecState(strData)
+    end)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -297,10 +422,10 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
     elseif strCommand == "MUTE_ON" or strCommand == "MUTE_OFF" or strCommand == "MUTE_TOGGLE" then
         MuteToggle()
 
-    elseif strCommand == "VOLUME_UP" or strCommand == "UP" then
+    elseif strCommand == "VOLUME_UP" then
         VolumeUp()
 
-    elseif strCommand == "VOLUME_DOWN" or strCommand == "DOWN" then
+    elseif strCommand == "VOLUME_DOWN" then
         VolumeDown()
 
     elseif strCommand == "SET_VOLUME_LEVEL" then
@@ -368,12 +493,10 @@ function PowerOn()
     end
 
     SendCEC(g_tvAddress, data, function(strData)
-        g_powerState = "ON"
-        C4:SendToProxy(1, "POWER_STATE_CHANGED", { POWER_STATE = "ON" })
         dbg("Power ON sent successfully")
     end)
 
-    -- Also notify C4 right away (optimistic)
+    -- Optimistic update — C4 gets immediate feedback
     g_powerState = "ON"
     C4:SendToProxy(1, "POWER_STATE_CHANGED", { POWER_STATE = "ON" })
 end
@@ -383,12 +506,10 @@ function PowerOff()
 
     -- Send Standby to TV
     SendCEC(g_tvAddress, {0x36}, function(strData)
-        g_powerState = "OFF"
-        C4:SendToProxy(1, "POWER_STATE_CHANGED", { POWER_STATE = "OFF" })
         dbg("Power OFF sent successfully")
     end)
 
-    -- Optimistic
+    -- Optimistic update
     g_powerState = "OFF"
     C4:SendToProxy(1, "POWER_STATE_CHANGED", { POWER_STATE = "OFF" })
 end
@@ -412,8 +533,10 @@ function SetInput(inputNum)
         dbg("Input switched to HDMI " .. inputNum)
     end)
 
-    -- Optimistic
-    g_currentInput = inputNum
+    -- Optimistic update; also update the dedup tracker so the TCP push for
+    -- this same input doesn't fire a second INPUT_CHANGED event.
+    g_currentInput    = inputNum
+    g_lastActiveInput = inputNum
     local bindingId = INPUT_BINDING_BASE + inputNum - 1
     C4:SendToProxy(1, "INPUT_CHANGED", { INPUT = tostring(bindingId) })
 end
@@ -471,6 +594,19 @@ function ExecuteCommand(strCommand, tParams)
             dbg("Send Raw CEC: no valid data bytes")
         end
 
+    elseif strCommand == "Query TV Power Status" then
+        -- 0x8F Give Device Power Status → TV replies with 0x90 Report Power Status
+        SendCEC(g_tvAddress, {0x8F})
+        dbg("Sent Give Device Power Status to TV@" .. g_tvAddress)
+
+    elseif strCommand == "Request Active Source" then
+        -- 0x85 Request Active Source (broadcast) → active device replies with 0x82
+        SendCEC(15, {0x85})
+        dbg("Broadcast Request Active Source")
+
+    elseif strCommand == "Poll CEC State" or strCommand == "PollCecState" then
+        PollCecState()
+
     -- Actions
     elseif strCommand == "PollStatus" then
         PollStatus()
@@ -478,6 +614,40 @@ function ExecuteCommand(strCommand, tParams)
         DoGet("/api/cec/log", function(strData)
             dbg("CEC Log: " .. (strData or "empty"))
         end)
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- SDDP AUTO-DISCOVERY
+-- ═══════════════════════════════════════════════════════════════════════════
+
+--[[
+  Fired by Control4 Director when SDDP discovers the device on the network
+  and auto-connects it to our TCP binding (6001).  We extract the IP from
+  the binding so the driver works without a manually entered static IP.
+
+  Also fires when Composer/Director manually connects or disconnects the binding.
+]]
+function NetworkBindingChanged(idBinding, bIsBound, otherDeviceId, otherBindingId)
+    if idBinding ~= TCP_BINDING then return end
+    dbg("NetworkBindingChanged: binding=" .. idBinding .. " bound=" .. tostring(bIsBound))
+
+    if bIsBound then
+        -- C4:GetBindingAddress returns "ip:port" or just "ip"
+        local addr = C4:GetBindingAddress(TCP_BINDING) or ""
+        local ip   = addr:match("^([%d%.]+)") or ""
+        if ip ~= "" and ip ~= "0.0.0.0" then
+            g_dongleIP = ip
+            C4:UpdateProperty("Dongle IP Address", ip)
+            dbg("SDDP: dongle auto-discovered at " .. ip)
+            -- Re-point the TCP push connection to the discovered address
+            SetupTcpConnection()
+            -- Pull current status over HTTP now we have the IP
+            PollStatus()
+        end
+    else
+        dbg("Network binding disconnected")
+        SetOffline()
     end
 end
 

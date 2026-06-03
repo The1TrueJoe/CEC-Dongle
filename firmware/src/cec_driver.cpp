@@ -53,11 +53,6 @@ void CecDriver::loop() {
         uint8_t srcAddr = (header >> 4) & 0xf;
         uint8_t dstAddr = header & 0xf;
 
-        if (!promiscuous_ && dstAddr != 0x0F && dstAddr != address_) {
-            framesQueue_.popFront();
-            continue;
-        }
-
         if (frame->size() == 1) {
             // Ping — already handled by ack mechanism
             framesQueue_.popFront();
@@ -218,7 +213,7 @@ bool CecDriver::send(uint8_t source, uint8_t destination,
     for (size_t attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         int32_t delay_val = 0;
         while ((delay_val = freeBitPeriods * TOTAL_BIT_US +
-                            std::max(lastSentUs_, (uint32_t)lastFallingEdgeUs_) - micros()) > 0) {
+                            std::max((uint32_t)lastSentUs_, (uint32_t)lastFallingEdgeUs_) - micros()) > 0) {
             delayMicroseconds(delay_val < 100 ? delay_val : 100);
             freeBitPeriods = 5;
         }
@@ -385,7 +380,7 @@ void IRAM_ATTR CecDriver::gpioISR() {
 
             if (self->recvBitCounter_ >= 8) {
                 if (self->frameReceive_) {
-                    self->frameReceive_->push_back(self->recvByteBuffer_);
+                    self->frameReceive_->push_back((uint8_t)self->recvByteBuffer_);
                 }
                 self->recvBitCounter_ = 0;
                 self->recvByteBuffer_ = 0;

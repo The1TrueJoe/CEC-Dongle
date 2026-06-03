@@ -8,19 +8,54 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
+#include <ESPAsyncTCP.h>
 #include <LittleFS.h>
 #include <Ticker.h>
+#ifdef ESP8266
+#include <Updater.h>
+// ESP8266 Updater.h does not define UPDATE_SIZE_UNKNOWN; use available flash space
+#ifndef UPDATE_SIZE_UNKNOWN
+#define UPDATE_SIZE_UNKNOWN ((ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000)
+#endif
+// ESP8266 UpdaterClass uses getErrorString(); alias so web_server.h stays portable
+#define errorString getErrorString
+#else
 #include <Update.h>
+#endif
 #include <circular_queue/circular_queue.h>
 
 #include "cec_driver.h"
 #include "config_manager.h"
 #include "wifi_manager.h"
 
+// ── JSON string escape helper ────────────────────────────────────────────────
+// Escapes characters that are illegal inside a JSON string literal.
+// Used when building JSON via raw string concatenation (not via ArduinoJson).
+static String jsonEscape(const String &s) {
+    String out;
+    out.reserve(s.length() + 8);
+    for (size_t i = 0; i < s.length(); i++) {
+        const char c = s[i];
+        if      (c == '"')  out += F("\\\"");
+        else if (c == '\\') out += F("\\\\");
+        else if (c == '\n') out += F("\\n");
+        else if (c == '\r') out += F("\\r");
+        else if (c == '\t') out += F("\\t");
+        else if ((uint8_t)c < 0x20) {
+            char esc[7]; snprintf(esc, sizeof(esc), "\\u%04X", (uint8_t)c);
+            out += esc;
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
 // ── Simple ring buffer for CEC event log ────────────────────────────────────
 
 struct CecLogEntry {
     uint32_t timestamp;
+    uint32_t seqNum;
     String direction; // "rx" or "tx"
     String hex;
     String readable;
@@ -33,21 +68,30 @@ public:
     void add(const String &direction, const CecFrame &frame) {
         CecLogEntry entry;
         entry.timestamp = millis();
+        entry.seqNum    = nextSeq_++;
         entry.direction = direction;
-        entry.hex = frame.toHexString();
-        entry.readable = frame.toReadableString();
+        entry.hex       = frame.toHexString();
+        entry.readable  = frame.toReadableString();
         entries_.push_back(entry);
         while (entries_.size() > maxSize_) entries_.erase(entries_.begin());
     }
 
-    String toJson() const {
+    String toJson() const { return toJsonSince(0); }
+
+    // Returns entries with timestamp strictly after sinceMs (0 = all)
+    String toJsonSince(uint32_t sinceMs) const {
         String json = "[";
-        for (size_t i = 0; i < entries_.size(); i++) {
-            if (i > 0) json += ",";
-            json += "{\"t\":" + String(entries_[i].timestamp)
-                  + ",\"dir\":\"" + entries_[i].direction + "\""
-                  + ",\"hex\":\"" + entries_[i].hex + "\""
-                  + ",\"msg\":\"" + entries_[i].readable + "\"}";
+        bool first = true;
+        for (const auto &e : entries_) {
+            if (sinceMs == 0 || e.timestamp > sinceMs) {
+                if (!first) json += ",";
+                json += "{\"seq\":" + String(e.seqNum)
+                      + ",\"t\":" + String(e.timestamp)
+                      + ",\"dir\":\"" + e.direction + "\""
+                      + ",\"hex\":\"" + jsonEscape(e.hex) + "\""
+                      + ",\"msg\":\"" + jsonEscape(e.readable) + "\"}";
+                first = false;
+            }
         }
         json += "]";
         return json;
@@ -58,6 +102,160 @@ public:
 private:
     std::vector<CecLogEntry> entries_;
     uint16_t maxSize_ = 50;
+    uint32_t nextSeq_ = 0;
+};
+
+// ── CEC TV State Tracker ─────────────────────────────────────────────────────
+//
+// Passively observes all CEC bus traffic and maintains a decoded view of TV
+// state (power, active input, volume, mute).  Updated by the CEC callback in
+// main.cpp; read by the /api/cec/state endpoint.
+
+class CecStateTracker {
+public:
+    String   tvPower      = "unknown"; // "on" | "standby" | "turning_on" | "unknown"
+    uint16_t activeSource = 0;         // physical address of active source (0 = unknown)
+    int      volume       = -1;        // -1 = unknown; 0-100
+    bool     mute         = false;
+    bool     muteKnown    = false;
+    uint32_t lastUpdatedMs = 0;
+
+    // Call for every CEC frame (src/dst are logical addresses, data begins at opcode).
+    // Returns true when any tracked state changed (used to trigger a TCP push).
+    bool update(uint8_t src, uint8_t dst, const std::vector<uint8_t> &data) {
+        if (data.empty()) return false;
+        bool changed = false;
+        const uint8_t opcode = data[0];
+
+        switch (opcode) {
+            case 0x04: // Image View On  → TV waking up
+            case 0x0D: // Text View On
+                if (tvPower != "on") { tvPower = "on"; changed = true; }
+                break;
+
+            case 0x36: // Standby — only care when sent to TV (0) or broadcast
+                if ((dst == 0 || dst == 0xF) && tvPower != "standby") {
+                    tvPower = "standby"; changed = true;
+                }
+                break;
+
+            case 0x90: // Report Power Status (TV's reply to 0x8F Give Power Status)
+                if (data.size() >= 2) {
+                    const uint8_t ps = data[1];
+                    // 0x00=On  0x01=Standby  0x02=Standby->On  0x03=On->Standby
+                    String next = (ps == 0x00) ? "on"
+                                : (ps == 0x02) ? "turning_on"
+                                :                "standby";
+                    if (tvPower != next) { tvPower = next; changed = true; }
+                }
+                break;
+
+            case 0x82: // Active Source (broadcast — device claims an input)
+                if (data.size() >= 3) {
+                    uint16_t pa = ((uint16_t)data[1] << 8) | data[2];
+                    if (activeSource != pa) { activeSource = pa; changed = true; }
+                    // Seeing active source implies the TV is on
+                    if (tvPower == "standby" || tvPower == "unknown") {
+                        tvPower = "on"; changed = true;
+                    }
+                }
+                break;
+
+            case 0x86: // Set Stream Path (TV broadcasts to request an input)
+                if (data.size() >= 3) {
+                    uint16_t pa = ((uint16_t)data[1] << 8) | data[2];
+                    if (activeSource != pa) { activeSource = pa; changed = true; }
+                }
+                break;
+
+            case 0x9D: // Inactive Source
+                if (data.size() >= 3) {
+                    uint16_t pa = ((uint16_t)data[1] << 8) | data[2];
+                    if (activeSource == pa) { activeSource = 0; changed = true; }
+                }
+                break;
+
+            case 0x7A: // Report Audio Status (from ARC device or TV)
+                if (data.size() >= 2) {
+                    bool newMute = (data[1] & 0x80) != 0;
+                    int  newVol  = data[1] & 0x7F;
+                    if (!muteKnown || mute != newMute || volume != newVol) {
+                        mute = newMute; muteKnown = true; volume = newVol; changed = true;
+                    }
+                }
+                break;
+        }
+
+        if (changed) lastUpdatedMs = millis();
+        return changed;
+    }
+
+    String toJson() const {
+        int inputNum = (activeSource >> 12) & 0xF;
+        char srcBuf[5]; snprintf(srcBuf, sizeof(srcBuf), "%04X", (unsigned)activeSource);
+        String j = "{";
+        j += "\"tv_power\":\"" + tvPower + "\"";
+        j += ",\"active_source\":\"0x" + String(srcBuf) + "\"";
+        j += ",\"active_input\":" + String(inputNum);
+        j += ",\"volume\":" + String(volume);
+        j += ",\"mute\":"   + String(muteKnown && mute ? "true" : "false");
+        j += ",\"last_updated_ms\":" + String(lastUpdatedMs);
+        j += "}";
+        return j;
+    }
+};
+
+// ── TCP Push Server ─────────────────────────────────────────────────────────
+// Broadcasts a newline-delimited JSON line to every connected TCP client the
+// moment CEC state changes. Control4 holds a persistent connection here and
+// reacts via ReceivedFromNetwork() — no polling needed.
+
+class CecPushServer {
+public:
+    void begin(uint16_t port = 9000) {
+        server_ = new AsyncServer(port);
+        server_->onClient([this](void*, AsyncClient *client) {
+            clients_.push_back(client);
+            Serial.printf("[Push] Client connected: %s (%u total)\n",
+                          client->remoteIP().toString().c_str(),
+                          (unsigned)clients_.size());
+            client->onDisconnect([this](void*, AsyncClient *c) { removeClient(c); }, nullptr);
+            client->onError([this](void*, AsyncClient *c, int8_t) { removeClient(c); }, nullptr);
+            client->onTimeout([this](void*, AsyncClient *c, uint32_t) {
+                Serial.printf("[Push] Client %s timed out — disconnecting\n",
+                              c->remoteIP().toString().c_str());
+                c->close();
+                removeClient(c);
+            }, nullptr);
+        }, nullptr);
+        server_->begin();
+        Serial.printf("[Push] TCP push server on port %u\n", (unsigned)port);
+    }
+
+    // Send a JSON state snapshot to all connected clients (newline-delimited).
+    void push(const String &json) {
+        if (clients_.empty()) return;
+        String line = json + "\n";
+        const char *data = line.c_str();
+        size_t len = line.length();
+        for (AsyncClient *c : clients_) {
+            if (c->connected() && c->space() >= len) {
+                c->write(data, len);
+            } else if (c->connected()) {
+                Serial.printf("[Push] Client %s buffer full — dropping state update\n",
+                              c->remoteIP().toString().c_str());
+            }
+        }
+    }
+
+private:
+    void removeClient(AsyncClient *target) {
+        clients_.erase(std::remove(clients_.begin(), clients_.end(), target),
+                       clients_.end());
+    }
+
+    AsyncServer              *server_ = nullptr;
+    std::vector<AsyncClient*> clients_;
 };
 
 // ── Web Server class ────────────────────────────────────────────────────────
@@ -66,27 +264,37 @@ class WebServer {
 public:
     using VoidCb = std::function<void()>;
 
-    WebServer(CecDriver &cec, ConfigManager &cfg, WiFiManager &wifi, CecEventLog &log)
-        : server_(80), cec_(cec), cfg_(cfg), wifi_(wifi), log_(log) {}
+    WebServer(CecDriver &cec, ConfigManager &cfg, WiFiManager &wifi,
+              CecEventLog &log, CecStateTracker &state)
+        : server_(80), cec_(cec), cfg_(cfg), wifi_(wifi), log_(log), state_(state) {}
 
     // Register a callback fired when an HTTP OTA upload starts.
     // main.cpp uses this to pause the CEC ISR before flash writes begin.
     void onOtaBegin(VoidCb cb) { otaBeginCb_ = cb; }
     void onOtaEnd(VoidCb cb)   { otaEndCb_   = cb; }
 
+    // Broadcast a CEC state JSON snapshot to all connected TCP push clients.
+    void push(const String &json) { pushServer_.push(json); }
+
     void begin() {
         // ── Web UI ──────────────────────────────────────────────────────
+        // Serve wizard in AP mode, main UI when connected to WiFi
         server_.on("/", HTTP_GET, [this](AsyncWebServerRequest *req) {
-            sendUi(req);
+            if (wifi_.isConnected()) sendUi(req);
+            else                    sendWizard(req);
         });
         server_.on("/index.html", HTTP_GET, [this](AsyncWebServerRequest *req) {
-            sendUi(req);
+            if (wifi_.isConnected()) sendUi(req);
+            else                    sendWizard(req);
+        });
+        server_.on("/wizard.html", HTTP_GET, [this](AsyncWebServerRequest *req) {
+            sendWizard(req);
         });
         server_.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest *req) {
             req->send(204);
         });
 
-        // ── Captive portal redirects ────────────────────────────────────
+        // ── Captive portal redirects (all unknown paths → /)
         server_.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest *req) {
             req->redirect("/");
         });
@@ -256,6 +464,20 @@ public:
             req->send(200, "application/json", "{\"success\":true}");
         });
 
+        // Returns events with timestamp after ?since=<ms>; omit or 0 for all
+        server_.on("/api/cec/events", HTTP_GET, [this](AsyncWebServerRequest *req) {
+            uint32_t since = 0;
+            if (req->hasParam("since")) {
+                since = (uint32_t)req->getParam("since")->value().toInt();
+            }
+            req->send(200, "application/json", log_.toJsonSince(since));
+        });
+
+        // Decoded TV state derived from passive CEC bus monitoring
+        server_.on("/api/cec/state", HTTP_GET, [this](AsyncWebServerRequest *req) {
+            req->send(200, "application/json", state_.toJson());
+        });
+
         // ── REST: Config ────────────────────────────────────────────────
 
         server_.on("/api/config", HTTP_GET, [this](AsyncWebServerRequest *req) {
@@ -420,39 +642,49 @@ public:
             }
         });
 
+        pushServer_.begin(9000);
         server_.begin();
         Serial.println("[Web] Server started on port 80");
     }
 
 private:
-    void sendUi(AsyncWebServerRequest *req) {
-        if (LittleFS.exists("/index.html.gz")) {
-            AsyncWebServerResponse *response = req->beginResponse(LittleFS, "/index.html.gz", "text/html");
+    void sendFileFromLittleFS(AsyncWebServerRequest *req, const String &stem) {
+        String gzPath = "/" + stem + ".html.gz";
+        String htmlPath = "/" + stem + ".html";
+        if (LittleFS.exists(gzPath)) {
+            AsyncWebServerResponse *response = req->beginResponse(LittleFS, gzPath, "text/html");
             response->addHeader("Content-Encoding", "gzip");
             response->addHeader("Cache-Control", "public, max-age=3600");
             req->send(response);
             return;
         }
-
-        if (LittleFS.exists("/index.html")) {
-            AsyncWebServerResponse *response = req->beginResponse(LittleFS, "/index.html", "text/html");
+        if (LittleFS.exists(htmlPath)) {
+            AsyncWebServerResponse *response = req->beginResponse(LittleFS, htmlPath, "text/html");
             response->addHeader("Cache-Control", "no-cache");
             req->send(response);
             return;
         }
-
         req->send(
-            503,
-            "text/html",
-            "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>CEC Dongle</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#111318;color:#e4e4e7;display:grid;place-items:center;min-height:100vh;margin:0;padding:24px}main{max-width:560px;background:#181b22;border:1px solid #272c38;border-radius:10px;padding:20px}code{background:#1e222b;padding:2px 6px;border-radius:4px}</style></head><body><main><h1>UI filesystem image not found</h1><p>Upload the LittleFS image after flashing firmware.</p><p>Run <code>pio run -t uploadfs</code> in the <code>firmware</code> folder, or use the OTA environment and upload the filesystem image over the network.</p></main></body></html>"
+            503, "text/html",
+            "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>CEC Dongle</title><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#111318;color:#e4e4e7;display:grid;place-items:center;min-height:100vh;margin:0;padding:24px}main{max-width:560px;background:#181b22;border:1px solid #272c38;border-radius:10px;padding:20px}code{background:#1e222b;padding:2px 6px;border-radius:4px}</style></head><body><main><h1>Filesystem image not found</h1><p>Run <code>pio run -t uploadfs</code> in the <code>firmware</code> folder.</p></main></body></html>"
         );
     }
 
+    void sendUi(AsyncWebServerRequest *req) {
+        sendFileFromLittleFS(req, "index");
+    }
+
+    void sendWizard(AsyncWebServerRequest *req) {
+        sendFileFromLittleFS(req, "wizard");
+    }
+
     AsyncWebServer server_;
+    CecPushServer  pushServer_;
     CecDriver &cec_;
     ConfigManager &cfg_;
     WiFiManager &wifi_;
     CecEventLog &log_;
+    CecStateTracker &state_;
     VoidCb  otaBeginCb_;
     VoidCb  otaEndCb_;
     Ticker  restartTicker_;

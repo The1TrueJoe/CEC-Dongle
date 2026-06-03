@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CEC Dongle Setup</title>
+  <link rel="stylesheet" href="wizard.css">
+</head>
+<body>
+<div class="page">
+
+  <div class="brand">
+    <div class="brand-icon">
+      <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="20" cy="20" r="19" stroke="#4a90d6" stroke-width="2"/>
+        <circle cx="20" cy="20" r="6" fill="#4a90d6"/>
+        <path d="M20 4 L20 10M20 30 L20 36M4 20 L10 20M30 20 L36 20" stroke="#4a90d6" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <h1>CEC Dongle</h1>
+    <p class="subtitle">WiFi Setup</p>
+  </div>
+
+  <!-- Step 1: Scan -->
+  <div class="card" id="scanCard">
+    <div class="card-head">Select your network</div>
+    <div id="netList"><div class="msg"><div class="spinner-sm"></div>Scanning&#8230;</div></div>
+    <div class="card-foot">
+      <button class="btn-link" id="rescanBtn">&#8635; Rescan</button>
+    </div>
+  </div>
+
+  <!-- Step 2: Credentials -->
+  <div class="card hidden" id="credCard">
+    <div class="card-head">
+      <button class="back-btn" id="backBtn">&#8592;</button>
+      <span id="credHeading">Password</span>
+    </div>
+    <div class="field-group">
+      <div id="openBadge" class="open-badge hidden">Open network &#8212; no password needed</div>
+      <div id="passWrap">
+        <label class="field-label">Password</label>
+        <div class="pass-wrap">
+          <input type="password" id="wifiPass" placeholder="WiFi password" autocomplete="current-password">
+          <button class="show-btn" id="showPass" type="button">&#128065;</button>
+        </div>
+      </div>
+      <label class="field-label mt">Hostname <span class="optional">(optional)</span></label>
+      <input type="text" id="hostname" placeholder="cec-dongle" autocomplete="off">
+      <span class="hint">Access device at http://cec-dongle.local after setup</span>
+    </div>
+    <div class="actions">
+      <button class="btn-primary" id="connectBtn">Connect</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Connecting -->
+  <div class="card hidden" id="connectingCard">
+    <div class="center-block">
+      <div class="spinner"></div>
+      <p class="msg-big" id="connectMsg">Connecting&#8230;</p>
+    </div>
+  </div>
+
+  <!-- Step 4: Done -->
+  <div class="card hidden" id="doneCard">
+    <div class="center-block">
+      <div class="done-icon">&#10003;</div>
+      <p class="msg-big">Setup complete!</p>
+      <p class="msg-sub" id="doneMsg"></p>
+    </div>
+  </div>
+
+</div>
+<script src="wizard.js"></script>
+</body>
+</html>
