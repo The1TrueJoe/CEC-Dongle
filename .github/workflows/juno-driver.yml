@@ -1,0 +1,33 @@
+# Builds the Juno driver in juno/ on every push that touches it — produces a beta release on
+# this repo's own GitHub releases every time, via driver-sdk's public build workflow.
+#
+# Deliberately no `tags: ['v*']` trigger here: this repo's firmware release process already
+# uses version tags (see build.yml's `release: types: [published]`), and driver-ci's reusable
+# workflow strips a literal `v` prefix off the tag and checks it against manifest.toml's own
+# version — sharing that tag namespace between two independent release processes (firmware and
+# driver, which will not usually share a version number) means one tags a firmware release and
+# the other's version check fails loudly for no reason. A real stable/tagged release for the
+# driver can be wired up once there's a deliberate answer for tag namespacing across both.
+#
+# Calls driver-sdk's public build workflow directly rather than the certified one: that one
+# also indexes into junohouse's private driver registry, which needs an organisation secret
+# this repo (outside that org) does not have. The build, validation, and packaging are exactly
+# the same either way — a `.junodrv` from here installs the same as a certified one, it just
+# will not show up in Juno's own driver search.
+name: Juno Driver
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'juno/**'
+      - '.github/workflows/juno-driver.yml'
+  workflow_dispatch:
+
+jobs:
+  driver:
+    uses: junohouse/driver-ci/.github/workflows/driver.yml@main
+    permissions:
+      contents: write
+    with:
+      packages: '["juno"]'

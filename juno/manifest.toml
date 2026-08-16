@@ -1,0 +1,66 @@
+[driver]
+id = "cec_dongle.tv"
+name = "CEC-Dongle"
+manufacturer = "CEC-Dongle"
+version = "1.0.0"
+runtime = "wasm"
+primary = true
+
+[[proxy]]
+id = 1
+type = "tv"
+primary = true
+name = "TV"
+# No has_discrete_volume: CEC has no "set to N", only step up/down.
+# No has_hold: the dongle sends a keypress and its release, not a held key it can ramp.
+# No has_channel_control: this bridges CEC only, not a tuner.
+capabilities = { has_discrete_power = true, has_discrete_input = true, has_discrete_mute = true, has_volume = true }
+
+# A guess, not a report: the dongle has no EDID/DDC line (see the project's own docs), so it
+# cannot ask the TV how many HDMI ports it actually has the way a Roku or a Hisense set can.
+# Four is a reasonable default; an installer with more can add [[connection]] entries up to
+# input8, which the dongle's REST API already supports.
+[[connection]]
+id = 1001
+proxy = 1
+dir = "consumer"
+class = "HDMI"
+name = "HDMI 1"
+[[connection]]
+id = 1002
+proxy = 1
+dir = "consumer"
+class = "HDMI"
+name = "HDMI 2"
+[[connection]]
+id = 1003
+proxy = 1
+dir = "consumer"
+class = "HDMI"
+name = "HDMI 3"
+[[connection]]
+id = 1004
+proxy = 1
+dir = "consumer"
+class = "HDMI"
+name = "HDMI 4"
+
+# The dongle's own push server (see firmware/src/web_server.h's CecPushServer): one JSON object
+# per line, held open, pushed the moment the CEC bus reports a change — nothing here polls.
+[[transport]]
+kind = "tcp"
+port = 9000
+keepalive = true
+
+[[property]]
+name = "Address"
+type = "string"
+required = true
+tooltip = "IP address or mDNS hostname of the dongle, e.g. 192.168.1.42 or cec-dongle.local"
+
+# Matches the service the firmware has advertised since it joined WiFi — see
+# firmware/src/main.cpp. `_cec._tcp` is this project's own service name, so a responder to it
+# needs no further probe to confirm what it is, unlike `_http._tcp` which any ESP8266 web
+# server would also answer.
+[discovery]
+mdns = ["_cec._tcp"]
