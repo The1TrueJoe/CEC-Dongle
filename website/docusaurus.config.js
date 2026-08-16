@@ -129,7 +129,7 @@ const config = {
             ],
           },
         ],
-        copyright: `Copyright © ${new Date().getFullYear()} CEC-Dongle. Built with Docusaurus.`,
+        copyright: `Copyright © ${new Date().getFullYear()} Joseph Telaak. Built with Docusaurus.`,
       },
       prism: {
         theme: prismThemes.github,
