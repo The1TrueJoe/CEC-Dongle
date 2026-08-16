@@ -119,4 +119,13 @@ def build_web_ui(*_args, **_kwargs):
     build_one(UI_DIR / "wizard.html", "wizard")
 
 
-env.AddPreAction("$BUILD_DIR/littlefs.bin", build_web_ui)
+# Run unconditionally, every invocation — this script is loaded via `pre:` in
+# platformio.ini, which runs regardless of target (build/buildfs/upload/...).
+# Gating this behind env.AddPreAction("$BUILD_DIR/littlefs.bin", ...) instead
+# only fired when SCons already considered that target out-of-date — a
+# decision based on the `data/` output directory, which nothing here declares
+# as depending on `ui/`. Editing ui/*.js and running `-t buildfs` would then
+# silently skip regeneration and flash whatever was already in data/.
+# write_if_changed() already no-ops when content is identical, so calling
+# this every time is cheap.
+build_web_ui()

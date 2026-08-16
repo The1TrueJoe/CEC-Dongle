@@ -17,6 +17,7 @@ async function loadConfig() {
   $('cfgAudioAddress').value  = c.audio_logical_address != null ? c.audio_logical_address : 5;
   $('cfgVolumeTarget').value  = c.volume_target     || 'audio';
   $('cfgPowerOnCmd').value    = c.power_on_command  || 'image_view_on';
+  $('cfgPowerOffCmd').value   = c.power_off_command || 'standby';
 }
 
 async function saveConfig() {
@@ -35,6 +36,7 @@ async function saveConfig() {
     audio_logical_address: parseInt($('cfgAudioAddress').value, 10),
     volume_target:         $('cfgVolumeTarget').value,
     power_on_command:      $('cfgPowerOnCmd').value,
+    power_off_command:     $('cfgPowerOffCmd').value,
   });
 }
 
@@ -44,8 +46,15 @@ async function scanWifi() {
   var card = $('wifiScanCard');
   card.style.display = 'block';
   $('wifiScanResult').innerHTML = '<div class="empty">Scanning\u2026</div>';
-  var nets = await api('/api/wifi/scan');
-  if (!nets || !Array.isArray(nets) || !nets.length) {
+  // Poll until the async scan completes (firmware returns {scanning:true} while running)
+  var data;
+  for (;;) {
+    data = await api('/api/wifi/scan');
+    if (!data || !data.scanning) break;
+    await new Promise(function (r) { setTimeout(r, 1000); });
+  }
+  var nets = data && data.networks;
+  if (!nets || !nets.length) {
     $('wifiScanResult').innerHTML = '<div class="empty">No networks found.</div>';
     return;
   }
@@ -94,7 +103,9 @@ function uploadFirmware() {
     if (xhr.status === 200) {
       bar.style.width = '100%';
       lbl.textContent = '100% \u2014 restarting\u2026';
-      toast('Firmware uploaded \u2014 restarting', 'ok');
+      var msg = 'Uploaded \u2014 restarting';
+      try { msg = JSON.parse(xhr.responseText).message || msg; } catch (e2) {}
+      toast(msg, 'ok');
     } else {
       var msg = 'Upload failed';
       try { msg = JSON.parse(xhr.responseText).error || msg; } catch (e2) {}

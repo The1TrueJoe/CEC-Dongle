@@ -7,6 +7,7 @@
  */
 
 #include <Arduino.h>
+#include <ESP8266mDNS.h>
 
 #include "config_manager.h"
 #include "wifi_manager.h"
@@ -49,6 +50,21 @@ void setup() {
     otaMgr.onBegin([&]() { cecDriver.pause(); });
     otaMgr.onEnd([&]()   { cecDriver.resume(); });
     otaMgr.begin(cfg.hostname);
+
+    // 2c. Advertise over mDNS/Bonjour so controllers auto-discover the dongle.
+    // ArduinoOTA.begin() already started the responder on <hostname>.local and
+    // calls MDNS.update() from handle(); the responder re-announces itself on
+    // every interface change (AP -> STA, DHCP renewal), so this runs once here.
+    // Discovery: browse _cec._tcp for this device specifically, or _http._tcp
+    // for anything with a web UI (Home Assistant, `dns-sd -B _http._tcp`).
+    MDNS.addService("cec", "tcp", 80);
+    MDNS.addService("http", "tcp", 80);
+    MDNS.addServiceTxt("http", "tcp", "model",   "CEC-Dongle");
+    MDNS.addServiceTxt("http", "tcp", "version", VERSION);
+    MDNS.addServiceTxt("http", "tcp", "api",     "/api/status");
+    MDNS.addServiceTxt("http", "tcp", "push",    "9000");
+    Serial.printf("[mDNS] Advertising %s.local  _cec._tcp / _http._tcp :80\n",
+                  cfg.hostname.c_str());
 
     // 3. Initialise CEC driver
     cecLog.setMaxSize(cfg.logBufferSize);
@@ -99,6 +115,10 @@ void setup() {
 // Start SDDP once STA WiFi connects; re-announced automatically on IP change.
 static bool sddpStarted = false;
 
+// How often to poll the TV for power status (ms). Each poll blocks loop() for
+// ~70 ms, or ~350 ms if the TV doesn't ACK, so don't push this much lower.
+static constexpr uint32_t POWER_POLL_MS = 15000;
+
 void loop() {
     wifiMgr.loop();
     if (!sddpStarted && wifiMgr.isConnected()) {
@@ -108,4 +128,16 @@ void loop() {
     sddpServer.loop();
     otaMgr.handle();
     cecDriver.loop();
+    if (webServer) webServer->loop(); // drains HTTP-requested CEC sends — see PendingCecCmd
+
+    // Ask the TV for its power status periodically. Without this the state
+    // tracker only learns anything when some other device happens to talk, so
+    // a freshly booted dongle would report "unknown" indefinitely. The reply
+    // (0x90 Report Power Status) is decoded by the normal RX path.
+    static uint32_t lastPollMs = 0;
+    if (wifiMgr.isConnected() && !otaMgr.isActive() &&
+        millis() - lastPollMs > POWER_POLL_MS) {
+        lastPollMs = millis();
+        cecDriver.send(configMgr.config.tvLogicalAddress, {0x8F});
+    }
 }

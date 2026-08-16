@@ -26,7 +26,10 @@ void CecDriver::begin(uint8_t pin, uint8_t logicalAddress, uint16_t physicalAddr
 
     instance_ = this;
 
+    // Register-level toggling below assumes GPIO0-15 (GPIO16 has no interrupt
+    // support on the ESP8266, so it can never carry CEC anyway).
     pinMode(pin_, INPUT_PULLUP);
+    GPOC = (1 << pin_);   // latch a 0 once; setPinOutputLow() only flips enable
     framesQueue_.reset();
     attachInterrupt(digitalPinToInterrupt(pin_), CecDriver::gpioISR, CHANGE);
 
@@ -322,14 +325,22 @@ bool IRAM_ATTR CecDriver::sendHighAndTest() {
 }
 
 // ── Pin helpers ─────────────────────────────────────────────────────────────
+//
+// These run from the GPIO ISR, so they must not touch flash. pinMode() on the
+// ESP8266 core is NOT in IRAM (core_esp8266_wiring_digital.cpp), and calling it
+// from an ISR crashes whenever the flash cache is busy — i.e. during a config
+// save or an OTA write, exactly when the bus is also active. Toggling the
+// output-enable register directly is IRAM-safe and faster.
+//
+// begin() leaves the output latch at 0 and the pull-up enabled, so:
+//   drive low = enable the output driver, release = disable it (pull-up wins).
 
 void IRAM_ATTR CecDriver::setPinInputHigh() {
-    pinMode(pin_, INPUT_PULLUP);
+    GPEC = (1 << pin_);   // GPIO_ENABLE_CLR — high-Z, pull-up takes the line high
 }
 
 void IRAM_ATTR CecDriver::setPinOutputLow() {
-    pinMode(pin_, OUTPUT_OPEN_DRAIN);
-    digitalWrite(pin_, LOW);
+    GPES = (1 << pin_);   // GPIO_ENABLE_SET — drive the (already 0) latch low
 }
 
 // ── ISR ─────────────────────────────────────────────────────────────────────

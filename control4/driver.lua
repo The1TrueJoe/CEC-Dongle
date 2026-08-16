@@ -63,6 +63,7 @@ g_tvAddress     = 0
 g_audioAddress  = 5
 g_volumeTarget  = "audio"   -- "audio" | "tv" | "broadcast"
 g_powerOnCmd    = "image_view_on" -- "image_view_on" | "text_view_on" | "user_control_power"
+g_powerOffCmd   = "standby"       -- "standby" | "user_control_power"
 g_debugMode         = false
 g_powerState        = "OFF"
 g_currentInput      = 1
@@ -318,6 +319,14 @@ function SendCEC(destination, dataBytes, callback)
     DoPost("/api/cec/send", body, callback)
 end
 
+-- User Control Pressed (0x44) must be followed by User Control Released
+-- (0x45) per spec — some TVs treat an unreleased key as held/ignore it.
+function SendCECKey(destination, key, callback)
+    SendCEC(destination, {0x44, key}, function()
+        SendCEC(destination, {0x45}, callback)
+    end)
+end
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- STATUS POLLING
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -341,6 +350,9 @@ function PollStatus()
             end
             if result.power_on_command ~= nil then
                 g_powerOnCmd = tostring(result.power_on_command)
+            end
+            if result.power_off_command ~= nil then
+                g_powerOffCmd = tostring(result.power_off_command)
             end
 
             C4:UpdateProperty("Driver Status",
@@ -483,18 +495,13 @@ end
 function PowerOn()
     dbg("PowerOn -> CEC TV address " .. g_tvAddress)
 
-    local data
     if g_powerOnCmd == "text_view_on" then
-        data = {0x0D}
+        SendCEC(g_tvAddress, {0x0D})
     elseif g_powerOnCmd == "user_control_power" then
-        data = {0x44, 0x6D}
+        SendCECKey(g_tvAddress, 0x6D, function() dbg("Power ON sent successfully") end)
     else
-        data = {0x04} -- Image View On
+        SendCEC(g_tvAddress, {0x04}) -- Image View On
     end
-
-    SendCEC(g_tvAddress, data, function(strData)
-        dbg("Power ON sent successfully")
-    end)
 
     -- Optimistic update — C4 gets immediate feedback
     g_powerState = "ON"
@@ -502,12 +509,13 @@ function PowerOn()
 end
 
 function PowerOff()
-    dbg("PowerOff -> CEC Standby, TV address " .. g_tvAddress)
+    dbg("PowerOff -> CEC TV address " .. g_tvAddress)
 
-    -- Send Standby to TV
-    SendCEC(g_tvAddress, {0x36}, function(strData)
-        dbg("Power OFF sent successfully")
-    end)
+    if g_powerOffCmd == "user_control_power" then
+        SendCECKey(g_tvAddress, 0x6C, function() dbg("Power OFF sent successfully") end)
+    else
+        SendCEC(g_tvAddress, {0x36}) -- Standby
+    end
 
     -- Optimistic update
     g_powerState = "OFF"

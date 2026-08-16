@@ -3,6 +3,12 @@
 .pioenvs/
 .piolibdeps/
 
+# Python
+__pycache__/
+.venv/
+venv/
+env/
+
 # IDE
 .vscode/
 .idea/
@@ -15,7 +21,7 @@
 
 # Build
 firmware/.pio/
-firmware/data/index.html
+firmware/data/*.html
 firmware/data/*.gz
 
 # Control4 packaged driver

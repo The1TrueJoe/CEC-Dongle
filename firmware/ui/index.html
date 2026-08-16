@@ -139,12 +139,21 @@
           </td>
         </tr>
         <tr>
-          <td class="lbl">Power On Command<span class="hint">CEC message sent when turning on TV</span></td>
+          <td class="lbl">Power On Command<span class="hint">CEC message sent when turning on TV. Some TVs ACK "Image View On" but ignore it &#8212; if power-on doesn't work, try User Control: Power</span></td>
           <td>
             <select id="cfgPowerOnCmd">
               <option value="image_view_on">Image View On (0x04) &#8212; recommended</option>
               <option value="text_view_on">Text View On (0x0D)</option>
-              <option value="user_control_power">User Control: Power (0x44 0x6D)</option>
+              <option value="user_control_power">User Control: Power On (0x44 0x6D)</option>
+            </select>
+          </td>
+        </tr>
+        <tr>
+          <td class="lbl">Power Off Command<span class="hint">CEC message sent when turning off TV. Some TVs ACK "Standby" but ignore it &#8212; if power-off doesn't work, try User Control: Power</span></td>
+          <td>
+            <select id="cfgPowerOffCmd">
+              <option value="standby">Standby (0x36) &#8212; recommended</option>
+              <option value="user_control_power">User Control: Power Off (0x44 0x6C)</option>
             </select>
           </td>
         </tr>
@@ -337,10 +346,10 @@
     </div>
 
     <div class="card">
-      <div class="card-header">Upload Firmware</div>
+      <div class="card-header">Upload Firmware / Full Update</div>
       <table class="cfg-table">
         <tr>
-          <td class="lbl">.bin file<span class="hint">From pio run -e slwf08 &#8594; .pio/build/slwf08/firmware.bin</span></td>
+          <td class="lbl">.bin file<span class="hint">combined.bin — updates firmware + web UI (recommended)<br>firmware.bin — firmware only</span></td>
           <td><input type="file" id="otaFile" accept=".bin"></td>
         </tr>
       </table>

@@ -1,0 +1,736 @@
+openapi: 3.1.0
+info:
+  title: CEC-Dongle REST API
+  version: "1.0.0"
+  description: |
+    REST API exposed by the CEC-Dongle firmware (ESP8266). Full CEC bus
+    control, WiFi provisioning, device configuration, and OTA firmware
+    updates over HTTP. CORS is enabled on every response, so this API is
+    safe to call directly from a browser.
+
+    ## Discovery
+    The device advertises itself over mDNS as soon as it joins WiFi:
+    `<hostname>.local` (default `cec-dongle.local`), with service records
+    `_cec._tcp` and `_http._tcp` on port 80. It also answers SDDP multicast
+    searches for Control4 auto-discovery.
+
+    ## CEC command queueing
+    Every endpoint that puts a frame on the CEC bus (`/api/cec/send`,
+    `/api/cec/cmd`, `/api/cec/input`, and the `/api/cec/power/*`,
+    `/api/cec/volume/*`, `/api/cec/source/active` aliases) is queued and
+    answered once the frame actually goes out — normally under 100ms. A
+    `503` means the queue (max 4) is full; back off and retry.
+  license:
+    name: MIT
+    identifier: MIT
+externalDocs:
+  description: Project repository
+  url: https://github.com/The1TrueJoe/CEC-Dongle
+security: []
+servers:
+  - url: http://cec-dongle.local
+    description: Default hostname (mDNS) — replace with your device's actual hostname or IP
+  - url: http://{ip}
+    description: Direct IP address
+    variables:
+      ip:
+        default: 192.168.1.1
+
+tags:
+  - name: Status
+    description: Device and connectivity status
+  - name: CEC Control
+    description: Send CEC commands to the bus
+  - name: CEC Log
+    description: Recent CEC bus traffic and decoded TV state
+  - name: Config
+    description: Persistent device configuration
+  - name: WiFi
+    description: Network scanning and provisioning
+  - name: System
+    description: Restart and factory reset
+  - name: OTA
+    description: Firmware and filesystem updates over HTTP
+
+paths:
+  /api/status:
+    get:
+      tags: [Status]
+      summary: Device status
+      description: Uptime, WiFi connectivity, heap, and current CEC/config summary.
+      operationId: getStatus
+      responses:
+        "200":
+          description: Current device status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+  /api/cec/send:
+    post:
+      tags: [CEC Control]
+      summary: Send a raw CEC frame
+      description: >
+        Full control over source/destination logical addresses and opcode
+        bytes. Prefer `/api/cec/cmd` for anything covered by the standard
+        command table — it resolves destinations from device config instead
+        of requiring hex.
+      operationId: sendRawCec
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [data]
+              properties:
+                destination:
+                  type: integer
+                  minimum: 0
+                  maximum: 15
+                  default: 15
+                  description: CEC logical address (0-14), or 15 for broadcast
+                source:
+                  type: integer
+                  minimum: 0
+                  maximum: 15
+                  description: Defaults to the dongle's own negotiated logical address
+                data:
+                  type: array
+                  minItems: 1
+                  items: { type: integer, minimum: 0, maximum: 255 }
+                  description: Opcode byte followed by any operand bytes
+                  example: [4]
+            examples:
+              imageViewOn:
+                summary: Image View On → TV
+                value: { destination: 0, data: [4] }
+      responses:
+        "200":
+          description: Frame sent and acknowledged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SendResult" }
+        "400":
+          description: Missing or invalid body
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "500":
+          description: Frame sent but not acknowledged by the bus (still reports the frame that was attempted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SendResult" }
+        "503":
+          description: CEC send queue is full (max 4 in flight) — retry shortly
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/cec/commands:
+    get:
+      tags: [CEC Control]
+      summary: List every supported named command
+      operationId: listCecCommands
+      responses:
+        "200":
+          description: Every command name accepted by `/api/cec/cmd`
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+                example: [tv_on, tv_off, volume_up, volume_down, mute, input1]
+
+  /api/cec/cmd:
+    get:
+      tags: [CEC Control]
+      summary: Run a named CEC command (GET)
+      description: >
+        GET is accepted so a plain URL is enough to trigger a command (e.g.
+        from a browser address bar or a simple automation webhook).
+        Destination logical addresses and opcodes are resolved from the
+        device's saved config — callers never need to know CEC internals.
+      operationId: runCecCommandGet
+      parameters:
+        - $ref: "#/components/parameters/CecCommandName"
+        - $ref: "#/components/parameters/CecCommandRepeat"
+      responses:
+        "200": { $ref: "#/components/responses/CecCommandResult" }
+        "404": { $ref: "#/components/responses/UnknownCommand" }
+        "500": { $ref: "#/components/responses/CecCommandResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+    post:
+      tags: [CEC Control]
+      summary: Run a named CEC command (POST)
+      operationId: runCecCommandPost
+      parameters:
+        - $ref: "#/components/parameters/CecCommandName"
+        - $ref: "#/components/parameters/CecCommandRepeat"
+      responses:
+        "200": { $ref: "#/components/responses/CecCommandResult" }
+        "404": { $ref: "#/components/responses/UnknownCommand" }
+        "500": { $ref: "#/components/responses/CecCommandResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+
+  /api/cec/power/on:
+    get:
+      tags: [CEC Control]
+      summary: "Alias: tv_on (GET)"
+      description: >
+        Equivalent to `/api/cec/cmd?name=tv_on`. Uses the configured
+        `power_on_command` style. GET and POST both accepted, matching every
+        alias below — a plain URL is enough to trigger it.
+      operationId: powerOnGet
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+    post:
+      tags: [CEC Control]
+      summary: "Alias: tv_on"
+      description: Equivalent to `/api/cec/cmd?name=tv_on`. Uses the configured `power_on_command` style.
+      operationId: powerOn
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+
+  /api/cec/power/off:
+    get:
+      tags: [CEC Control]
+      summary: "Alias: tv_off (GET)"
+      operationId: powerOffGet
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+    post:
+      tags: [CEC Control]
+      summary: "Alias: tv_off"
+      description: Equivalent to `/api/cec/cmd?name=tv_off`. Uses the configured `power_off_command` style.
+      operationId: powerOff
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+
+  /api/cec/volume/up:
+    get:
+      tags: [CEC Control]
+      summary: "Alias: volume_up (GET)"
+      operationId: volumeUpGet
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+    post:
+      tags: [CEC Control]
+      summary: "Alias: volume_up"
+      operationId: volumeUp
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+
+  /api/cec/volume/down:
+    get:
+      tags: [CEC Control]
+      summary: "Alias: volume_down (GET)"
+      operationId: volumeDownGet
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+    post:
+      tags: [CEC Control]
+      summary: "Alias: volume_down"
+      operationId: volumeDown
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+
+  /api/cec/volume/mute:
+    get:
+      tags: [CEC Control]
+      summary: "Alias: mute (GET)"
+      operationId: muteGet
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+    post:
+      tags: [CEC Control]
+      summary: "Alias: mute"
+      operationId: mute
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+
+  /api/cec/source/active:
+    get:
+      tags: [CEC Control]
+      summary: "Alias: active — broadcast Active Source (GET)"
+      operationId: sourceActiveGet
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+    post:
+      tags: [CEC Control]
+      summary: "Alias: active — broadcast Active Source"
+      description: Claims the dongle's configured physical address as the active input.
+      operationId: sourceActive
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+
+  /api/cec/input:
+    post:
+      tags: [CEC Control]
+      summary: Switch input (Set Stream Path)
+      operationId: setInput
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [physical_address]
+              properties:
+                physical_address:
+                  type: integer
+                  description: CEC physical address, e.g. 0x2000 for HDMI 2 on the root TV
+                  example: 8192
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+        "400":
+          description: Missing or invalid body
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "500": { $ref: "#/components/responses/SimpleResult" }
+        "503": { $ref: "#/components/responses/CecBusy" }
+
+  /api/cec/log:
+    get:
+      tags: [CEC Log]
+      summary: Recent CEC bus traffic
+      operationId: getCecLog
+      responses:
+        "200":
+          description: Ring buffer of recent CEC frames (both directions)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CecLogEntry" }
+    delete:
+      tags: [CEC Log]
+      summary: Clear the CEC log
+      operationId: clearCecLog
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+
+  /api/cec/events:
+    get:
+      tags: [CEC Log]
+      summary: CEC log entries since a timestamp
+      description: Poll this with the last-seen `t` value to get only new entries.
+      operationId: getCecEvents
+      parameters:
+        - name: since
+          in: query
+          schema: { type: integer, default: 0 }
+          description: Millisecond device-uptime timestamp; entries after this are returned. Omit or 0 for all.
+      responses:
+        "200":
+          description: CEC frames newer than `since`
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CecLogEntry" }
+
+  /api/cec/state:
+    get:
+      tags: [CEC Log]
+      summary: Decoded TV state from passive bus monitoring
+      description: >
+        Built entirely from observed bus traffic (Report Power Status,
+        Active Source, Report Audio Status, etc.) — not polled on demand.
+        The same JSON shape is pushed over the TCP socket on port 9000
+        whenever it changes.
+      operationId: getCecState
+      responses:
+        "200":
+          description: Current decoded TV state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CecState" }
+
+  /api/config:
+    get:
+      tags: [Config]
+      summary: Current configuration
+      description: WiFi password is masked in the response (`***`).
+      operationId: getConfig
+      responses:
+        "200":
+          description: Current persisted configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Config" }
+    post:
+      tags: [Config]
+      summary: Update configuration (partial)
+      description: >
+        Any subset of fields may be sent; omitted fields are left unchanged.
+        CEC-related changes (pin, addresses, device type) require a restart
+        to take effect — `hostname` changes apply immediately (the mDNS
+        responder is re-pointed live).
+      operationId: updateConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfigUpdate" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+        "400":
+          description: Missing or invalid body
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/wifi/scan:
+    get:
+      tags: [WiFi]
+      summary: Scan for nearby WiFi networks
+      description: >
+        Asynchronous — the scan runs across several `loop()` iterations on
+        the device (scanning synchronously would stall the softAP serving
+        this very request). Poll this endpoint every ~1s; while
+        `scanning: true`, keep polling.
+      operationId: scanWifi
+      responses:
+        "200":
+          description: Either a scan-in-progress marker or the completed network list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      scanning: { type: boolean, enum: [true] }
+                  - $ref: "#/components/schemas/WifiScanResult"
+
+  /api/wifi/connect:
+    post:
+      tags: [WiFi]
+      summary: Connect to a WiFi network
+      description: >
+        Saves credentials and returns immediately; the actual STA connect
+        attempt happens ~600ms later so this response can reach the client
+        before the softAP (which is serving this very request, in AP mode)
+        goes down. Poll `/api/status`'s `wifi_status` field for the real
+        outcome — `"Connected"` on success, or still `"AP Mode"`/reachable
+        after ~15s on failure.
+      operationId: connectWifi
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ssid]
+              properties:
+                ssid: { type: string }
+                password: { type: string, description: Omit or empty for an open network }
+      responses:
+        "200":
+          description: Credentials accepted, connection attempt scheduled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+        "400":
+          description: Missing ssid or body
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/system/restart:
+    post:
+      tags: [System]
+      summary: Restart the device
+      operationId: restart
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+
+  /api/system/reset:
+    post:
+      tags: [System]
+      summary: Factory reset
+      description: Clears all saved config (including WiFi credentials) and restarts into setup mode.
+      operationId: factoryReset
+      responses:
+        "200": { $ref: "#/components/responses/SimpleResult" }
+
+  /api/ota/update:
+    post:
+      tags: [OTA]
+      summary: Upload a firmware (or combined firmware+filesystem) binary
+      description: >
+        Standard multipart file upload. Accepts either a plain
+        `firmware.bin` (flashes firmware only) or a `combined.bin` produced
+        by the build's combine step (magic header `CECF`, flashes firmware
+        then the LittleFS filesystem image in one upload — this is what the
+        GitHub Actions release build produces). The device restarts
+        automatically ~1.2s after a successful write.
+      operationId: uploadOta
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                firmware:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Flashed successfully, restarting
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SuccessResponse" }
+        "500":
+          description: Flash write failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+components:
+  parameters:
+    CecCommandName:
+      name: name
+      in: query
+      required: true
+      schema:
+        type: string
+        enum:
+          - tv_on
+          - tv_off
+          - standby_all
+          - active
+          - inactive
+          - power_status
+          - audio_status
+          - request_active_source
+          - input1
+          - input2
+          - input3
+          - input4
+          - input5
+          - input6
+          - input7
+          - input8
+          - select
+          - up
+          - down
+          - left
+          - right
+          - root_menu
+          - setup_menu
+          - contents_menu
+          - exit
+          - num_0
+          - num_1
+          - num_2
+          - num_3
+          - num_4
+          - num_5
+          - num_6
+          - num_7
+          - num_8
+          - num_9
+          - channel_up
+          - channel_down
+          - previous_channel
+          - play
+          - stop
+          - pause
+          - record
+          - rewind
+          - fast_forward
+          - eject
+          - forward
+          - backward
+          - power_toggle
+          - power_off_key
+          - power_on_key
+          - volume_up
+          - volume_down
+          - mute
+          - mute_on
+          - mute_off
+      description: See `GET /api/cec/commands` for the authoritative, always-current list.
+    CecCommandRepeat:
+      name: repeat
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 5, default: 1 }
+      description: Repeat the command this many times (useful for volume step commands)
+
+  responses:
+    SimpleResult:
+      description: Command result
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SuccessResponse" }
+    CecCommandResult:
+      description: Command result, echoing which command ran
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/SuccessResponse"
+              - type: object
+                properties:
+                  command: { type: string }
+    UnknownCommand:
+      description: Command name not in the standard table
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    CecBusy:
+      description: CEC send queue is full (max 4 in flight) — retry shortly
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  schemas:
+    StatusResponse:
+      type: object
+      properties:
+        version: { type: string, example: "1.0.0" }
+        uptime_ms: { type: integer }
+        hostname: { type: string, example: cec-dongle }
+        wifi_status: { type: string, enum: [Idle, "AP Mode", "Connecting...", Connected] }
+        wifi_ip: { type: string, example: 192.168.1.42 }
+        heap_free: { type: integer, description: Free heap bytes }
+        cec_address: { type: integer, description: Negotiated CEC logical address }
+        cec_physical: { type: integer, description: CEC physical address }
+        cec_osd_name: { type: string }
+        tv_logical_address: { type: integer }
+        audio_logical_address: { type: integer }
+        volume_target: { type: string, enum: [audio, tv, broadcast] }
+        power_on_command: { type: string, enum: [image_view_on, text_view_on, user_control_power] }
+        power_off_command: { type: string, enum: [standby, user_control_power] }
+        device_type: { type: string, enum: [playback, audio, recording, tuner, free] }
+        auto_negotiate: { type: boolean }
+        ota_enabled: { type: boolean }
+        ui_storage: { type: string, example: littlefs-gzip }
+
+    SendResult:
+      type: object
+      properties:
+        success: { type: boolean }
+        frame: { type: string, description: "Hex representation of the frame that was sent", example: "40:04" }
+
+    SuccessResponse:
+      type: object
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+
+    ErrorResponse:
+      type: object
+      properties:
+        success: { type: boolean, enum: [false] }
+        error: { type: string }
+
+    CecLogEntry:
+      type: object
+      properties:
+        seq: { type: integer }
+        t: { type: integer, description: Device-uptime milliseconds }
+        dir: { type: string, enum: [tx, rx] }
+        hex: { type: string, example: "40:04" }
+        msg: { type: string, example: "Playback 1 -> TV: Image View On" }
+
+    CecState:
+      type: object
+      properties:
+        tv_power: { type: string, enum: [on, standby, turning_on, unknown] }
+        active_source: { type: string, example: "0x1000" }
+        active_input: { type: integer, description: HDMI input number derived from active_source }
+        volume: { type: integer, description: "-1 if unknown, else 0-100" }
+        mute: { type: boolean }
+        last_updated_ms: { type: integer }
+
+    WifiNetwork:
+      type: object
+      properties:
+        ssid: { type: string }
+        rssi: { type: integer, description: dBm }
+        encrypted: { type: boolean }
+
+    WifiScanResult:
+      type: object
+      properties:
+        scanning: { type: boolean, enum: [false] }
+        networks:
+          type: array
+          items: { $ref: "#/components/schemas/WifiNetwork" }
+
+    Config:
+      type: object
+      properties:
+        wifi_ssid: { type: string }
+        wifi_password: { type: string, description: Always masked as "***" in GET responses }
+        hostname: { type: string }
+        cec_pin: { type: integer }
+        cec_address: { type: integer }
+        cec_physical: { type: integer }
+        cec_osd_name: { type: string }
+        cec_promiscuous: { type: boolean }
+        cec_monitor_mode: { type: boolean }
+        log_buffer_size: { type: integer }
+        tv_logical_address: { type: integer }
+        audio_logical_address: { type: integer }
+        volume_target: { type: string, enum: [audio, tv, broadcast] }
+        power_on_command: { type: string, enum: [image_view_on, text_view_on, user_control_power] }
+        power_off_command: { type: string, enum: [standby, user_control_power] }
+        device_type: { type: string, enum: [playback, audio, recording, tuner, free] }
+        auto_negotiate: { type: boolean }
+
+    ConfigUpdate:
+      type: object
+      description: All fields optional — only sent fields are updated.
+      properties:
+        wifi_ssid: { type: string }
+        wifi_password: { type: string }
+        hostname: { type: string }
+        cec_pin: { type: integer }
+        cec_address: { type: integer }
+        cec_physical: { type: integer }
+        cec_osd_name: { type: string }
+        cec_promiscuous: { type: boolean }
+        cec_monitor_mode: { type: boolean }
+        log_buffer_size: { type: integer }
+        tv_logical_address: { type: integer }
+        audio_logical_address: { type: integer }
+        volume_target: { type: string, enum: [audio, tv, broadcast] }
+        power_on_command: { type: string, enum: [image_view_on, text_view_on, user_control_power] }
+        power_off_command: { type: string, enum: [standby, user_control_power] }
+        device_type: { type: string, enum: [playback, audio, recording, tuner, free] }
+        auto_negotiate: { type: boolean }

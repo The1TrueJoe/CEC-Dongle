@@ -35,10 +35,15 @@ struct Config {
     uint8_t audioLogicalAddress = 5;              // Audio System logical address
     String  volumeTarget        = "audio";        // "audio" | "tv" | "broadcast"
     String  powerOnCommand      = "image_view_on"; // "image_view_on" | "text_view_on" | "user_control_power"
+    // Some TVs ACK "Standby" (0x36) but don't act on it — same class of quirk
+    // as power_on_command, needing the dedicated remote key instead.
+    String  powerOffCommand     = "standby";       // "standby" | "user_control_power"
 
     // CEC address allocation
     String  deviceType          = "playback"; // "playback" | "audio" | "recording" | "tuner" | "free"
-    bool    autoNegotiate       = false;      // Auto-negotiate logical address at startup
+    // On by default: a fixed address collides with any real device already
+    // sitting there (the old 0x05 default fights every soundbar on the bus).
+    bool    autoNegotiate       = true;       // Auto-negotiate logical address at startup
 };
 
 class ConfigManager {
@@ -87,8 +92,9 @@ public:
         config.audioLogicalAddress    = doc["audio_logical_address"]   | 5;
         config.volumeTarget           = doc["volume_target"]           | "audio";
         config.powerOnCommand         = doc["power_on_command"]        | "image_view_on";
+        config.powerOffCommand        = doc["power_off_command"]       | "standby";
         config.deviceType             = doc["device_type"]             | "playback";
-        config.autoNegotiate          = doc["auto_negotiate"]          | false;
+        config.autoNegotiate          = doc["auto_negotiate"]          | true;
 
         Serial.println("[Config] Loaded successfully");
         return true;
@@ -111,6 +117,7 @@ public:
         doc["audio_logical_address"]  = config.audioLogicalAddress;
         doc["volume_target"]          = config.volumeTarget;
         doc["power_on_command"]       = config.powerOnCommand;
+        doc["power_off_command"]      = config.powerOffCommand;
         doc["device_type"]            = config.deviceType;
         doc["auto_negotiate"]         = config.autoNegotiate;
 
@@ -152,6 +159,7 @@ public:
         doc["audio_logical_address"] = config.audioLogicalAddress;
         doc["volume_target"]         = config.volumeTarget;
         doc["power_on_command"]      = config.powerOnCommand;
+        doc["power_off_command"]     = config.powerOffCommand;
         doc["device_type"]           = config.deviceType;
         doc["auto_negotiate"]        = config.autoNegotiate;
         String out;

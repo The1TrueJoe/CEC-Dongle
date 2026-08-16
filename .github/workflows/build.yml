@@ -44,12 +44,14 @@ jobs:
         run: pio run -e slwf08 --target buildfs
         working-directory: firmware
 
-      # Stage both binaries with human-readable names for artifact upload
+      # Stage all binaries with human-readable names for artifact upload.
+      # combined.bin is produced by build_combined.py after both halves exist.
       - name: Stage artifacts
         run: |
           mkdir -p dist
-          cp firmware/.pio/build/slwf08/firmware.bin  dist/cec-dongle-firmware.bin
-          cp firmware/.pio/build/slwf08/littlefs.bin  dist/cec-dongle-littlefs.bin
+          cp firmware/.pio/build/slwf08/firmware.bin   dist/cec-dongle-firmware.bin
+          cp firmware/.pio/build/slwf08/littlefs.bin   dist/cec-dongle-littlefs.bin
+          cp firmware/.pio/build/slwf08/combined.bin   dist/cec-dongle-combined.bin
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -66,6 +68,7 @@ jobs:
           files: |
             dist/cec-dongle-firmware.bin
             dist/cec-dongle-littlefs.bin
+            dist/cec-dongle-combined.bin
 
   # ── Control4 Driver ───────────────────────────────────────────────────────
   control4-driver:

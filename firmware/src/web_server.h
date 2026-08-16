@@ -9,6 +9,7 @@
 #include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
 #include <ESPAsyncTCP.h>
+#include <ESP8266mDNS.h>
 #include <LittleFS.h>
 #include <Ticker.h>
 #ifdef ESP8266
@@ -25,6 +26,7 @@
 #include <circular_queue/circular_queue.h>
 
 #include "cec_driver.h"
+#include "cec_commands.h"
 #include "config_manager.h"
 #include "wifi_manager.h"
 
@@ -258,6 +260,31 @@ private:
     std::vector<AsyncClient*> clients_;
 };
 
+// ── Deferred CEC command queue ───────────────────────────────────────────────
+//
+// ESPAsyncTCP callbacks on ESP8266 run from the lwIP callback context, not a
+// separate task — blocking there stalls the WiFi/TCP stack for every other
+// client on the network, not just the one who asked. cec_.send() blocks for
+// ~70ms per frame (worse on retries), so HTTP handlers never call it directly;
+// they resolve the command (cheap) and enqueue it here. WebServer::loop() —
+// called from the sketch's main loop(), where blocking briefly is normal and
+// already how CEC negotiation/broadcast work at boot — drains one entry per
+// call and answers the held request once the frame is actually on the bus.
+//
+// AsyncWebServerRequest stays valid until req->send() is called; the only
+// timeout that could fire first is the client's own idle timeout for the
+// response (seconds), well clear of the worst case here (~1.75s: repeat=5 x
+// 5 retries x ~70ms).
+
+struct PendingCecCmd {
+    uint8_t source;
+    uint8_t dest;
+    std::vector<uint8_t> data;
+    bool release;
+    uint8_t repeat;
+    std::function<void(bool ok)> onDone;
+};
+
 // ── Web Server class ────────────────────────────────────────────────────────
 
 class WebServer {
@@ -325,6 +352,7 @@ public:
             doc["audio_logical_address"]= cfg_.config.audioLogicalAddress;
             doc["volume_target"]        = cfg_.config.volumeTarget;
             doc["power_on_command"]     = cfg_.config.powerOnCommand;
+            doc["power_off_command"]    = cfg_.config.powerOffCommand;
             doc["device_type"]          = cfg_.config.deviceType;
             doc["auto_negotiate"]       = cfg_.config.autoNegotiate;
             doc["ota_enabled"]          = true;
@@ -337,8 +365,16 @@ public:
 
         // ── REST: CEC Send ──────────────────────────────────────────────
 
+        // The onRequest callback below always fires — even when onBody also
+        // ran — right after the body finishes, in the same call stack. It
+        // must only answer the genuinely-empty-body case; the CEC send is
+        // queued and answered later (see PendingCecCmd), so if onRequest sent
+        // anything unconditionally here it would win the race and finalize
+        // the response before the real one was ready.
         server_.on("/api/cec/send", HTTP_POST, [](AsyncWebServerRequest *req) {
-            req->send(400, "application/json", "{\"error\":\"Missing body\"}");
+            if (req->contentLength() == 0) {
+                req->send(400, "application/json", "{\"error\":\"Missing body\"}");
+            }
         }, nullptr, [this](AsyncWebServerRequest *req, uint8_t *data, size_t len,
                            size_t index, size_t total) {
             JsonDocument doc;
@@ -359,81 +395,84 @@ public:
             std::vector<uint8_t> cecData;
             for (auto v : arr) cecData.push_back(v.as<uint8_t>());
 
-            bool ok = cec_.send(source, destination, cecData);
-
-            // Log the sent frame
-            CecFrame f(source, destination, cecData);
-            log_.add("tx", f);
-
-            JsonDocument resp;
-            resp["success"] = ok;
-            resp["frame"] = f.toHexString();
-            String out;
-            serializeJson(resp, out);
-            req->send(ok ? 200 : 500, "application/json", out);
+            String hex = CecFrame(source, destination, cecData).toHexString();
+            AsyncWebServerRequestPtr heldReq = req->pause();
+            bool queued = enqueueCec(source, destination, cecData, false, 1,
+                [heldReq, hex](bool ok) {
+                    auto r = heldReq.lock();
+                    if (!r) return; // client disconnected before the frame went out
+                    String out = "{\"success\":" + String(ok ? "true" : "false")
+                               + ",\"frame\":\"" + hex + "\"}";
+                    r->send(ok ? 200 : 500, "application/json", out);
+                });
+            if (!queued) {
+                req->send(503, "application/json",
+                          "{\"success\":false,\"error\":\"CEC busy, try again\"}");
+            }
         });
 
-        // ── REST: CEC Convenience endpoints ─────────────────────────────
+        // ── REST: Named CEC commands ────────────────────────────────────
+        //
+        //   GET  /api/cec/commands            → every supported command name
+        //   POST /api/cec/cmd?name=volume_up  → run one (GET also accepted, so
+        //                                       a plain URL is enough to drive it)
+        //   optional &repeat=N (1-5) for volume steps
+        //
+        // Destinations come from the device config, so clients never need to
+        // know logical addresses or opcodes.
 
-        // Power on (Image View On → TV)
-        server_.on("/api/cec/power/on", HTTP_POST, [this](AsyncWebServerRequest *req) {
-            uint8_t dest = 0;
-            if (req->hasParam("destination", true))
-                dest = req->getParam("destination", true)->value().toInt();
-            bool ok = cec_.send(dest, {0x04});
-            log_.add("tx", CecFrame(cec_.address(), dest, {0x04}));
-            req->send(ok ? 200 : 500, "application/json",
-                      ok ? "{\"success\":true}" : "{\"success\":false}");
+        server_.on("/api/cec/commands", HTTP_GET, [](AsyncWebServerRequest *req) {
+            req->send(200, "application/json", cecCommandListJson());
         });
 
-        // Standby
-        server_.on("/api/cec/power/off", HTTP_POST, [this](AsyncWebServerRequest *req) {
-            uint8_t dest = 0xF;
-            if (req->hasParam("destination", true))
-                dest = req->getParam("destination", true)->value().toInt();
-            bool ok = cec_.send(dest, {0x36});
-            log_.add("tx", CecFrame(cec_.address(), dest, {0x36}));
-            req->send(ok ? 200 : 500, "application/json",
-                      ok ? "{\"success\":true}" : "{\"success\":false}");
+        server_.on("/api/cec/cmd", HTTP_GET | HTTP_POST, [this](AsyncWebServerRequest *req) {
+            String name;
+            if      (req->hasParam("name"))       name = req->getParam("name")->value();
+            else if (req->hasParam("name", true)) name = req->getParam("name", true)->value();
+
+            uint8_t repeat = 1;
+            if (req->hasParam("repeat"))
+                repeat = (uint8_t)constrain(req->getParam("repeat")->value().toInt(), 1, 5);
+
+            CecResolved r = cecResolve(name, cfg_.config, cec_.physicalAddress());
+            if (!r.ok) {
+                req->send(404, "application/json",
+                          "{\"success\":false,\"error\":\"Unknown command\"}");
+                return;
+            }
+
+            String nameEsc = jsonEscape(name);
+            AsyncWebServerRequestPtr heldReq = req->pause();
+            bool queued = enqueueCec(cec_.address(), r.dest, r.data, r.release, repeat,
+                [heldReq, nameEsc](bool ok) {
+                    auto held = heldReq.lock();
+                    if (!held) return;
+                    held->send(ok ? 200 : 500, "application/json",
+                              String("{\"success\":") + (ok ? "true" : "false")
+                              + ",\"command\":\"" + nameEsc + "\"}");
+                });
+            if (!queued) {
+                req->send(503, "application/json",
+                          "{\"success\":false,\"error\":\"CEC busy, try again\"}");
+            }
         });
 
-        // Volume Up
-        server_.on("/api/cec/volume/up", HTTP_POST, [this](AsyncWebServerRequest *req) {
-            bool ok = cec_.send(0x5, {0x44, 0x41});
-            log_.add("tx", CecFrame(cec_.address(), 0x5, {0x44, 0x41}));
-            req->send(ok ? 200 : 500, "application/json",
-                      ok ? "{\"success\":true}" : "{\"success\":false}");
-        });
+        // ── REST: CEC Convenience endpoints (aliases for named commands) ─
 
-        // Volume Down
-        server_.on("/api/cec/volume/down", HTTP_POST, [this](AsyncWebServerRequest *req) {
-            bool ok = cec_.send(0x5, {0x44, 0x42});
-            log_.add("tx", CecFrame(cec_.address(), 0x5, {0x44, 0x42}));
-            req->send(ok ? 200 : 500, "application/json",
-                      ok ? "{\"success\":true}" : "{\"success\":false}");
-        });
-
-        // Mute
-        server_.on("/api/cec/volume/mute", HTTP_POST, [this](AsyncWebServerRequest *req) {
-            bool ok = cec_.send(0x5, {0x44, 0x43});
-            log_.add("tx", CecFrame(cec_.address(), 0x5, {0x44, 0x43}));
-            req->send(ok ? 200 : 500, "application/json",
-                      ok ? "{\"success\":true}" : "{\"success\":false}");
-        });
-
-        // Active Source
-        server_.on("/api/cec/source/active", HTTP_POST, [this](AsyncWebServerRequest *req) {
-            uint16_t pa = cec_.physicalAddress();
-            std::vector<uint8_t> d = {0x82, (uint8_t)(pa >> 8), (uint8_t)(pa & 0xFF)};
-            bool ok = cec_.send(0xF, d);
-            log_.add("tx", CecFrame(cec_.address(), 0xF, d));
-            req->send(ok ? 200 : 500, "application/json",
-                      ok ? "{\"success\":true}" : "{\"success\":false}");
-        });
+        registerAlias("/api/cec/power/on",     "tv_on");
+        registerAlias("/api/cec/power/off",    "tv_off");
+        registerAlias("/api/cec/volume/up",    "volume_up");
+        registerAlias("/api/cec/volume/down",  "volume_down");
+        registerAlias("/api/cec/volume/mute",  "mute");
+        registerAlias("/api/cec/source/active", "active");
 
         // Set Stream Path (change input)
+        // See the comment on /api/cec/send above — onRequest must not answer
+        // unconditionally here, the real response is deferred to the queue.
         server_.on("/api/cec/input", HTTP_POST, [](AsyncWebServerRequest *req) {
-            req->send(400, "application/json", "{\"error\":\"Missing body\"}");
+            if (req->contentLength() == 0) {
+                req->send(400, "application/json", "{\"error\":\"Missing body\"}");
+            }
         }, nullptr, [this](AsyncWebServerRequest *req, uint8_t *data, size_t len,
                            size_t index, size_t total) {
             JsonDocument doc;
@@ -447,10 +486,16 @@ public:
                 return;
             }
             std::vector<uint8_t> d = {0x86, (uint8_t)(pa >> 8), (uint8_t)(pa & 0xFF)};
-            bool ok = cec_.send(0xF, d);
-            log_.add("tx", CecFrame(cec_.address(), 0xF, d));
-            req->send(ok ? 200 : 500, "application/json",
-                      ok ? "{\"success\":true}" : "{\"success\":false}");
+            AsyncWebServerRequestPtr heldReq = req->pause();
+            bool queued = enqueueCec(cec_.address(), 0xF, d, false, 1, [heldReq](bool ok) {
+                auto r = heldReq.lock();
+                if (!r) return;
+                r->send(ok ? 200 : 500, "application/json", successJson(ok));
+            });
+            if (!queued) {
+                req->send(503, "application/json",
+                          "{\"success\":false,\"error\":\"CEC busy, try again\"}");
+            }
         });
 
         // ── REST: CEC Event Log ─────────────────────────────────────────
@@ -484,8 +529,16 @@ public:
             req->send(200, "application/json", cfg_.toJson());
         });
 
+        // onRequest fires unconditionally, right after onBody, in the same
+        // call stack — req->send() from onBody only stores a response object,
+        // it doesn't finalize one (that happens once, driven by the framework,
+        // after both callbacks return). An unconditional send() here would
+        // silently replace whatever onBody already set. Only answer the
+        // genuinely-empty-body case.
         server_.on("/api/config", HTTP_POST, [](AsyncWebServerRequest *req) {
-            req->send(400, "application/json", "{\"error\":\"Missing body\"}");
+            if (req->contentLength() == 0) {
+                req->send(400, "application/json", "{\"error\":\"Missing body\"}");
+            }
         }, nullptr, [this](AsyncWebServerRequest *req, uint8_t *data, size_t len,
                            size_t index, size_t total) {
             JsonDocument doc;
@@ -497,7 +550,13 @@ public:
             auto &c = cfg_.config;
             if (doc.containsKey("wifi_ssid"))           c.wifiSsid             = doc["wifi_ssid"].as<String>();
             if (doc.containsKey("wifi_password"))        c.wifiPassword          = doc["wifi_password"].as<String>();
-            if (doc.containsKey("hostname"))             c.hostname              = doc["hostname"].as<String>();
+            if (doc.containsKey("hostname")) {
+                c.hostname = doc["hostname"].as<String>();
+                // Re-point the mDNS responder now. The setup wizard tells the
+                // user to visit <hostname>.local right after saving, so waiting
+                // for a reboot would hand them a name that doesn't resolve.
+                MDNS.setHostname(c.hostname);
+            }
             if (doc.containsKey("cec_pin"))              c.cecPin                = doc["cec_pin"];
             if (doc.containsKey("cec_address"))          c.cecAddress            = doc["cec_address"];
             if (doc.containsKey("cec_physical"))         c.cecPhysical           = doc["cec_physical"];
@@ -509,6 +568,7 @@ public:
             if (doc.containsKey("audio_logical_address"))c.audioLogicalAddress   = doc["audio_logical_address"];
             if (doc.containsKey("volume_target"))        c.volumeTarget          = doc["volume_target"].as<String>();
             if (doc.containsKey("power_on_command"))     c.powerOnCommand        = doc["power_on_command"].as<String>();
+            if (doc.containsKey("power_off_command"))    c.powerOffCommand       = doc["power_off_command"].as<String>();
             if (doc.containsKey("device_type"))          c.deviceType            = doc["device_type"].as<String>();
             if (doc.containsKey("auto_negotiate"))       c.autoNegotiate         = doc["auto_negotiate"];
 
@@ -522,8 +582,12 @@ public:
             req->send(200, "application/json", wifi_.scanNetworks());
         });
 
+        // See the comment on /api/config above — onRequest must not answer
+        // unconditionally, it would clobber whatever onBody already set.
         server_.on("/api/wifi/connect", HTTP_POST, [](AsyncWebServerRequest *req) {
-            req->send(400, "application/json", "{\"error\":\"Missing body\"}");
+            if (req->contentLength() == 0) {
+                req->send(400, "application/json", "{\"error\":\"Missing body\"}");
+            }
         }, nullptr, [this](AsyncWebServerRequest *req, uint8_t *data, size_t len,
                            size_t index, size_t total) {
             JsonDocument doc;
@@ -579,50 +643,165 @@ public:
         server_.on("/api/ota/update", HTTP_POST,
             // (1) Response handler — called after the upload body is fully received
             [this](AsyncWebServerRequest *req) {
-                bool ok = !Update.hasError();
+                bool ok = !otaHasError_;
                 if (ok) {
-                    req->send(200, "application/json",
-                              "{\"success\":true,\"message\":\"Firmware written. Restarting...\"}");
+                    const char *msg = otaIsCombined_
+                        ? "Firmware + filesystem written. Restarting..."
+                        : "Firmware written. Restarting...";
+                    String resp = "{\"success\":true,\"message\":\"";
+                    resp += msg;
+                    resp += "\"}";
+                    req->send(200, "application/json", resp);
                     restartTicker_.once_ms(1200, []() {
                         Serial.println("[OTA HTTP] Restarting after successful flash");
                         ESP.restart();
                     });
                 } else {
                     String err = Update.errorString();
-                    String resp = "{\"success\":false,\"error\":\"" + err + "\"}";
+                    String resp = "{\"success\":false,\"error\":\"" + jsonEscape(err) + "\"}";
                     req->send(500, "application/json", resp);
-                    // Re-attach CEC ISR since OTA failed (onOtaEnd not called by Update)
                     if (otaEndCb_) otaEndCb_();
                     Serial.printf("[OTA HTTP] Failed: %s\n", err.c_str());
                 }
             },
-            // (2) Upload handler — streams the binary into flash
+            // (2) Upload handler — streams the binary into flash.
+            //
+            // Supports two file formats:
+            //   • Plain firmware.bin  — standard U_FLASH update (backward compat)
+            //   • combined.bin        — "CECF" magic header followed by firmware
+            //                          then LittleFS image; flashes both in sequence
+            //
+            // Combined binary layout (all sizes uint32 LE):
+            //   [0]  4 bytes  magic "CECF"
+            //   [4]  4 bytes  firmware size
+            //   [8]  4 bytes  filesystem size
+            //   [12] 4 bytes  reserved (zeros)
+            //   [16] fw bytes firmware.bin content
+            //   [16+fw] fs bytes  littlefs.bin content
             [this](AsyncWebServerRequest *req, const String &filename,
                    size_t index, uint8_t *data, size_t len, bool final) {
+
+                // ── Initialise on first chunk ────────────────────────
                 if (index == 0) {
+                    otaIsCombined_ = false;
+                    otaFwSize_     = 0;
+                    otaFsSize_     = 0;
+                    otaWritten_    = 0;
+                    otaFwDone_     = false;
+                    otaHasError_   = false;
                     Serial.printf("[OTA HTTP] Upload begin: %s\n", filename.c_str());
-                    // Pause CEC ISR before any flash write to avoid bus glitches
                     if (otaBeginCb_) otaBeginCb_();
-                    // UPDATE_SIZE_UNKNOWN lets the Update lib use available flash space
-                    if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
-                        Serial.printf("[OTA HTTP] begin() failed: %s\n", Update.errorString());
+
+                    if (len < 4) {
+                        // Extremely unlikely with any HTTP client; guard anyway
+                        Serial.println("[OTA HTTP] First chunk too small to detect format");
+                        otaHasError_ = true;
                         return;
                     }
-                }
-                if (Update.isRunning()) {
-                    size_t written = Update.write(data, len);
-                    if (written != len) {
-                        Serial.printf("[OTA HTTP] write() error: %s\n", Update.errorString());
+
+                    if (memcmp(data, "CECF", 4) == 0) {
+                        // ── Combined binary ──────────────────────────
+                        if (len < 16) {
+                            Serial.println("[OTA HTTP] Combined header split across chunks — not supported");
+                            otaHasError_ = true;
+                            return;
+                        }
+                        memcpy(&otaFwSize_, data + 4,  4);
+                        memcpy(&otaFsSize_, data + 8,  4);
+                        otaIsCombined_ = true;
+                        Serial.printf("[OTA HTTP] Combined binary — fw=%u  fs=%u\n",
+                                      otaFwSize_, otaFsSize_);
+                        if (!Update.begin(otaFwSize_, U_FLASH)) {
+                            Serial.printf("[OTA HTTP] begin(fw) failed: %s\n",
+                                          Update.errorString().c_str());
+                            otaHasError_ = true;
+                            return;
+                        }
+                        // Advance past the 16-byte header
+                        data += 16;
+                        len  -= 16;
+                    } else {
+                        // ── Plain firmware binary ────────────────────
+                        if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+                            Serial.printf("[OTA HTTP] begin() failed: %s\n",
+                                          Update.errorString().c_str());
+                            otaHasError_ = true;
+                            return;
+                        }
                     }
                 }
-                if (final) {
-                    if (Update.end(true)) {
-                        Serial.printf("[OTA HTTP] Success — %u bytes written\n",
-                                      static_cast<unsigned>(index + len));
-                        if (otaEndCb_) otaEndCb_();
-                    } else {
-                        Serial.printf("[OTA HTTP] end() failed: %s\n", Update.errorString());
-                        // otaEndCb_ called in response handler on error path above
+
+                if (otaHasError_) return;
+
+                // ── Write data ───────────────────────────────────────
+                if (otaIsCombined_) {
+                    while (len > 0) {
+                        if (!otaFwDone_) {
+                            // Writing firmware portion
+                            size_t remain  = otaFwSize_ - otaWritten_;
+                            size_t toWrite = (len < remain) ? len : remain;
+                            Update.write(data, toWrite);
+                            otaWritten_ += toWrite;
+                            data        += toWrite;
+                            len         -= toWrite;
+
+                            if (otaWritten_ >= otaFwSize_) {
+                                // Firmware portion complete
+                                if (!Update.end(true)) {
+                                    Serial.printf("[OTA HTTP] fw end() failed: %s\n",
+                                                  Update.errorString().c_str());
+                                    otaHasError_ = true;
+                                    return;
+                                }
+                                Serial.println("[OTA HTTP] Firmware portion flashed OK");
+                                otaFwDone_  = true;
+                                otaWritten_ = 0;
+                                // Start the filesystem update (even if no bytes left in this chunk)
+                                if (!Update.begin(otaFsSize_, U_FS)) {
+                                    Serial.printf("[OTA HTTP] begin(fs) failed: %s\n",
+                                                  Update.errorString().c_str());
+                                    otaHasError_ = true;
+                                    return;
+                                }
+                            }
+                        } else {
+                            // Writing filesystem portion
+                            size_t written = Update.write(data, len);
+                            otaWritten_ += written;
+                            len          = 0;
+                        }
+                    }
+
+                    if (final) {
+                        if (!Update.end(true)) {
+                            Serial.printf("[OTA HTTP] fs end() failed: %s\n",
+                                          Update.errorString().c_str());
+                            otaHasError_ = true;
+                        } else {
+                            Serial.printf("[OTA HTTP] Filesystem portion flashed OK (%u bytes)\n",
+                                          otaWritten_);
+                            if (otaEndCb_) otaEndCb_();
+                        }
+                    }
+                } else {
+                    // ── Plain firmware ───────────────────────────────
+                    if (Update.isRunning()) {
+                        size_t written = Update.write(data, len);
+                        if (written != len) {
+                            Serial.printf("[OTA HTTP] write() error: %s\n",
+                                          Update.errorString().c_str());
+                        }
+                    }
+                    if (final) {
+                        if (Update.end(true)) {
+                            Serial.printf("[OTA HTTP] Success — %u bytes written\n",
+                                          static_cast<unsigned>(index + len));
+                            if (otaEndCb_) otaEndCb_();
+                        } else {
+                            Serial.printf("[OTA HTTP] end() failed: %s\n",
+                                          Update.errorString().c_str());
+                            otaHasError_ = true;
+                        }
                     }
                 }
             }
@@ -647,7 +826,59 @@ public:
         Serial.println("[Web] Server started on port 80");
     }
 
+    // Drain one queued CEC command per call — see PendingCecCmd for why this
+    // can't run inside the HTTP handler that requested it. Call from the
+    // sketch's main loop().
+    void loop() {
+        if (cecQueue_.empty()) return;
+        PendingCecCmd cmd = std::move(cecQueue_.front());
+        cecQueue_.erase(cecQueue_.begin());
+
+        bool ok = true;
+        for (uint8_t i = 0; i < cmd.repeat; i++) {
+            ok = cec_.send(cmd.source, cmd.dest, cmd.data) && ok;
+            log_.add("tx", CecFrame(cmd.source, cmd.dest, cmd.data));
+            if (cmd.release) {
+                cec_.send(cmd.source, cmd.dest, {0x45});
+                log_.add("tx", CecFrame(cmd.source, cmd.dest, {0x45}));
+            }
+        }
+        if (cmd.onDone) cmd.onDone(ok);
+    }
+
+    // Legacy convenience path → named command, so config changes apply everywhere.
+    void registerAlias(const char *path, const char *command) {
+        String cmd(command);
+        server_.on(path, HTTP_GET | HTTP_POST, [this, cmd](AsyncWebServerRequest *req) {
+            CecResolved r = cecResolve(cmd, cfg_.config, cec_.physicalAddress());
+            AsyncWebServerRequestPtr heldReq = req->pause();
+            bool queued = enqueueCec(cec_.address(), r.dest, r.data, r.release, 1,
+                [heldReq](bool ok) {
+                    auto held = heldReq.lock();
+                    if (held) held->send(ok ? 200 : 500, "application/json", successJson(ok));
+                });
+            if (!queued) {
+                req->send(503, "application/json",
+                          "{\"success\":false,\"error\":\"CEC busy, try again\"}");
+            }
+        });
+    }
+
 private:
+    static const char *successJson(bool ok) {
+        return ok ? "{\"success\":true}" : "{\"success\":false}";
+    }
+
+    // Queue a CEC frame for WebServer::loop() to send. Returns false (queue
+    // full) without touching `onDone` — caller answers the request itself.
+    static constexpr size_t MAX_QUEUED_CEC_CMDS = 4;
+    bool enqueueCec(uint8_t source, uint8_t dest, const std::vector<uint8_t> &data,
+                     bool release, uint8_t repeat, std::function<void(bool)> onDone) {
+        if (cecQueue_.size() >= MAX_QUEUED_CEC_CMDS) return false;
+        cecQueue_.push_back({source, dest, data, release, repeat, onDone});
+        return true;
+    }
+
     void sendFileFromLittleFS(AsyncWebServerRequest *req, const String &stem) {
         String gzPath = "/" + stem + ".html.gz";
         String htmlPath = "/" + stem + ".html";
@@ -689,4 +920,13 @@ private:
     VoidCb  otaEndCb_;
     Ticker  restartTicker_;
     Ticker  connectTicker_;
+    std::vector<PendingCecCmd> cecQueue_;
+
+    // OTA upload state — valid for the duration of a single /api/ota/update POST
+    bool     otaIsCombined_ = false;
+    uint32_t otaFwSize_     = 0;
+    uint32_t otaFsSize_     = 0;
+    uint32_t otaWritten_    = 0;  // bytes written to the current Update pass
+    bool     otaFwDone_     = false;
+    bool     otaHasError_   = false;
 };
